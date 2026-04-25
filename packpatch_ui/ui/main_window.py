@@ -98,12 +98,12 @@ class MainWindow(QMainWindow):
         self.patch_preview.setReadOnly(True)
         self.patch_preview.setPlaceholderText("Selected/latest patch preview will appear here.")
         self.patch_preview.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
-        self.patch_preview.setMinimumHeight(180)
+        self.patch_preview.setMinimumHeight(160)
 
         self.log = QTextEdit(self)
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("Command output and status messages will appear here.")
-        self.log.setMinimumHeight(220)
+        self.log.setMinimumHeight(260)
 
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
@@ -187,14 +187,17 @@ class MainWindow(QMainWindow):
         artifact_controls.addWidget(self.copy_patch_path_button)
 
         artifact_lists = QHBoxLayout()
+        artifact_lists.setSpacing(8)
         pack_column_widget = QWidget(widget)
         pack_column = QVBoxLayout(pack_column_widget)
         pack_column.setContentsMargins(0, 0, 0, 0)
+        self.pack_list.setMaximumHeight(96)
         pack_column.addWidget(self.pack_list)
 
         patch_column_widget = QWidget(widget)
         patch_column = QVBoxLayout(patch_column_widget)
         patch_column.setContentsMargins(0, 0, 0, 0)
+        self.patch_list.setMaximumHeight(96)
         patch_column.addWidget(self.patch_list)
 
         self.packs_section = CollapsibleSection("Latest packs", pack_column_widget, collapsed=True, parent=widget)
@@ -217,13 +220,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(commit_controls)
         layout.addLayout(patch_controls)
         layout.addLayout(artifact_controls)
-        layout.addLayout(artifact_lists, stretch=1)
+        layout.addLayout(artifact_lists)
         self.patch_preview_section = CollapsibleSection("Patch preview", self.patch_preview, collapsed=True, parent=widget)
 
         layout.addLayout(tree_controls)
         layout.addWidget(self.file_tree, stretch=2)
-        layout.addWidget(self.patch_preview_section, stretch=1)
-        layout.addWidget(self.log, stretch=1)
+        layout.addWidget(self.patch_preview_section)
+        layout.addWidget(self.log, stretch=3)
         return widget
 
     def _build_status_bar(self) -> QStatusBar:
@@ -262,9 +265,9 @@ class MainWindow(QMainWindow):
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
         self.patch_list.currentItemChanged.connect(lambda *_: self._preview_selected_patch(silent=True))
         self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
-        self.packs_section.toggled.connect(lambda *_: self._schedule_autosave())
-        self.patches_section.toggled.connect(lambda *_: self._schedule_autosave())
-        self.patch_preview_section.toggled.connect(lambda *_: self._schedule_autosave())
+        self.packs_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
+        self.patches_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
+        self.patch_preview_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
 
     def _reload_session_combo(self, *, select_name: str | None = None) -> None:
         sessions = self._session_store.load_sessions()
@@ -391,6 +394,11 @@ class MainWindow(QMainWindow):
         self._session_store.upsert_session(self._current_session_snapshot(self._current_session_name))
         self.statusBar().showMessage("Session autosaved")
 
+    def _panel_collapsed_state_changed(self) -> None:
+        if self._loading_session:
+            return
+        self.centralWidget().updateGeometry()
+        self._schedule_autosave()
 
     def _encoded_window_geometry(self) -> str:
         geometry = self.saveGeometry()

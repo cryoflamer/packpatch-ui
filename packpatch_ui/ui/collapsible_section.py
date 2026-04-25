@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
 
 class CollapsibleSection(QWidget):
@@ -13,10 +13,10 @@ class CollapsibleSection(QWidget):
 
     def __init__(self, title: str, content: QWidget, *, collapsed: bool = False, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._title = title
         self._content = content
 
         self._toggle_button = QToolButton(self)
-        self._toggle_button.setText(title)
         self._toggle_button.setCheckable(True)
         self._toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toggle_button.toggled.connect(self._set_expanded)
@@ -35,9 +35,19 @@ class CollapsibleSection(QWidget):
 
     def set_collapsed(self, collapsed: bool) -> None:
         """Show or hide the content."""
-        self._toggle_button.setChecked(not collapsed)
+        expanded = not collapsed
+        if self._toggle_button.isChecked() == expanded:
+            self._set_expanded(expanded)
+            return
+        self._toggle_button.setChecked(expanded)
 
     def _set_expanded(self, expanded: bool) -> None:
         self._content.setVisible(expanded)
         self._toggle_button.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self._toggle_button.setText(f"{'▼' if expanded else '▶'} {self._title}")
+        self.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred if expanded else QSizePolicy.Policy.Maximum,
+        )
+        self.updateGeometry()
         self.toggled.emit(expanded)
