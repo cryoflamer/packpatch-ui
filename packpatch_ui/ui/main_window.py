@@ -42,6 +42,7 @@ from packpatch_ui.core.git_repo import (
 from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
 from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, latest_patch_path, read_patch_preview, undo_last_commit
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
+from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
 from packpatch_ui.ui.file_tree import FileTreeWidget
 
@@ -144,6 +145,7 @@ class MainWindow(QMainWindow):
         self.resize(1120, 780)
         self.setCentralWidget(self._build_central_widget())
         self.setStatusBar(self._build_status_bar())
+        self._apply_tooltips()
         self._connect_signals()
         self._current_session_name = self._session_store.load_active_session_name()
         self._reload_session_combo(select_name=self._current_session_name)
@@ -319,6 +321,62 @@ class MainWindow(QMainWindow):
         bottom_workspace.addWidget(self.git_commits_section, stretch=2)
         layout.addLayout(bottom_workspace, stretch=3)
         return widget
+
+    def _apply_tooltips(self) -> None:
+        """Apply tooltips from the external tooltip configuration."""
+        tooltip_map = {
+            self.session_combo: "session.combo",
+            self.new_session_button: "session.new",
+            self.save_session_button: "session.save",
+            self.save_session_as_button: "session.save_as",
+            self.delete_session_button: "session.delete",
+            self.repo_path_edit: "repo.path",
+            self.browse_button: "repo.browse",
+            self.refresh_button: "repo.refresh",
+            self.repository_status_section: "repo.status",
+            self.pack_mode_combo: "pack.mode",
+            self.task_name_edit: "pack.task",
+            self.create_pack_button: "pack.create",
+            self.auto_export_pack_check: "pack.auto_export",
+            self.export_dir_edit: "pack.export_dir",
+            self.browse_export_dir_button: "pack.browse_export",
+            self.packs_section: "pack.list",
+            self.pack_list: "pack.list",
+            self.copy_pack_path_button: "pack.copy_path",
+            self.delete_pack_button: "pack.delete",
+            self.patch_dir_edit: "patch.dir",
+            self.browse_patch_dir_button: "patch.browse_dir",
+            self.patch_target_combo: "patch.target",
+            self.check_latest_patch_button: "patch.check",
+            self.dry_run_patch_button: "patch.dry_run",
+            self.apply_latest_patch_button: "patch.apply",
+            self.refresh_artifacts_button: "patch.refresh_artifacts",
+            self.patches_section: "patch.list",
+            self.patch_list: "patch.list",
+            self.copy_patch_path_button: "patch.copy_path",
+            self.delete_patch_button: "patch.delete",
+            self.patch_preview_section: "patch.preview",
+            self.patch_preview: "patch.preview",
+            self.commit_message_edit: "commit.message",
+            self.git_commits_section: "commit.list",
+            self.commit_list: "commit.list",
+            self.refresh_commits_button: "commit.refresh",
+            self.copy_commit_hash_button: "commit.copy_hash",
+            self.undo_last_commit_button: "commit.undo",
+            self.file_filter_edit: "files.filter",
+            self.check_changed_button: "files.select_changed",
+            self.check_all_button: "files.check_all",
+            self.clear_selection_button: "files.clear",
+            self.file_tree_section: "files.tree",
+            self.file_tree: "files.tree",
+            self.selection_value: "files.selection_count",
+            self.log_section: "log",
+            self.log: "log",
+        }
+        for widget, key in tooltip_map.items():
+            text = tooltip(key)
+            if text:
+                widget.setToolTip(text)
 
     def _build_status_bar(self) -> QStatusBar:
         status_bar = QStatusBar(self)

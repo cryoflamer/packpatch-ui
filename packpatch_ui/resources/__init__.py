@@ -1,0 +1,1 @@
+"""PackPatch UI packaged resources."""

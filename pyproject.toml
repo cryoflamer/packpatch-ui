@@ -19,5 +19,9 @@ packpatch-ui = "packpatch_ui.__main__:main"
 where = ["."]
 include = ["packpatch_ui*"]
 
+
+[tool.setuptools.package-data]
+packpatch_ui = ["resources/*.json"]
+
 [tool.ruff]
 line-length = 120

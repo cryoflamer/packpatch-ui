@@ -29,6 +29,11 @@ class CollapsibleSection(QWidget):
 
         self.set_collapsed(collapsed)
 
+    def setToolTip(self, text: str) -> None:  # noqa: N802
+        """Set tooltip on both the wrapper and the visible toggle button."""
+        super().setToolTip(text)
+        self._toggle_button.setToolTip(text)
+
     def is_collapsed(self) -> bool:
         """Return whether the section content is currently hidden."""
         return not self._toggle_button.isChecked()
