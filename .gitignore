@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+.env.*
+
+# Packaging/build
+build/
+dist/
+*.egg-info/
+
+# Test/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE/OS
+.idea/
+.vscode/
+.DS_Store
+
+# PackPatch outputs
+chatgpt-packs/
+*.patch
