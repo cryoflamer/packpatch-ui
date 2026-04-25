@@ -103,26 +103,64 @@ class FileTreeWidget(QTreeWidget):
                 item = QTreeWidgetItem(parent, [part])
                 item.setData(0, Qt.ItemDataRole.UserRole, key)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(0, self._check_state_for_path(key, is_leaf=(key == path)))
+                item.setCheckState(0, self._check_state_for_path(key))
                 nodes[key] = item
             parent = item
 
-    def _check_state_for_path(self, path: str, *, is_leaf: bool) -> Qt.CheckState:
-        if is_leaf and path in self._selected_paths:
+    def _check_state_for_path(self, path: str) -> Qt.CheckState:
+        descendant_files = self._descendant_files(path)
+        if not descendant_files:
+            return Qt.CheckState.Unchecked
+
+        selected_count = sum(1 for file_path in descendant_files if file_path in self._selected_paths)
+        if selected_count == 0:
+            return Qt.CheckState.Unchecked
+        if selected_count == len(descendant_files):
             return Qt.CheckState.Checked
-        return Qt.CheckState.Unchecked
+        return Qt.CheckState.PartiallyChecked
+
+    def _descendant_files(self, path: str) -> list[str]:
+        if path in self._all_paths:
+            return [path]
+
+        prefix = f"{path}/"
+        return [file_path for file_path in self._all_paths if file_path.startswith(prefix)]
 
     def _item_changed(self, item: QTreeWidgetItem, column: int) -> None:
         if self._updating_tree or column != 0:
-            return
-        if item.childCount() != 0:
             return
 
         path = item.data(0, Qt.ItemDataRole.UserRole)
         if not isinstance(path, str) or not path:
             return
 
-        if item.checkState(0) == Qt.CheckState.Checked:
-            self._selected_paths.add(path)
+        descendant_files = self._descendant_files(path)
+        if not descendant_files:
+            return
+
+        state = item.checkState(0)
+        if state == Qt.CheckState.Checked:
+            self._selected_paths.update(descendant_files)
         else:
-            self._selected_paths.discard(path)
+            self._selected_paths.difference_update(descendant_files)
+
+        self._sync_visible_check_states()
+
+    def _sync_visible_check_states(self) -> None:
+        blocker = QSignalBlocker(self)
+        self._updating_tree = True
+        try:
+            root = self.invisibleRootItem()
+            for index in range(root.childCount()):
+                self._sync_item_check_state(root.child(index))
+        finally:
+            self._updating_tree = False
+            del blocker
+
+    def _sync_item_check_state(self, item: QTreeWidgetItem) -> None:
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if isinstance(path, str) and path:
+            item.setCheckState(0, self._check_state_for_path(path))
+
+        for index in range(item.childCount()):
+            self._sync_item_check_state(item.child(index))
