@@ -28,6 +28,9 @@ class AppSession:
     latest_packs_collapsed: bool = True
     latest_patches_collapsed: bool = False
     patch_preview_collapsed: bool = True
+    repository_status_collapsed: bool = False
+    file_tree_collapsed: bool = False
+    log_collapsed: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppSession":
@@ -47,6 +50,9 @@ class AppSession:
             latest_packs_collapsed=bool(data.get("latest_packs_collapsed", True)),
             latest_patches_collapsed=bool(data.get("latest_patches_collapsed", False)),
             patch_preview_collapsed=bool(data.get("patch_preview_collapsed", True)),
+            repository_status_collapsed=bool(data.get("repository_status_collapsed", False)),
+            file_tree_collapsed=bool(data.get("file_tree_collapsed", False)),
+            log_collapsed=bool(data.get("log_collapsed", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
