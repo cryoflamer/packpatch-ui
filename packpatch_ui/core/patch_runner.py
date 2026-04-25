@@ -33,7 +33,14 @@ def default_apply_script_path() -> Path:
     return Path(__file__).resolve().parents[2] / "tools" / "apply-latest-patch.sh"
 
 
-def apply_latest_patch(repo_root: Path, patch_dir: Path, *, dry_run: bool = False, strict: bool = False) -> PatchApplyResult:
+def apply_latest_patch(
+    repo_root: Path,
+    patch_dir: Path,
+    *,
+    dry_run: bool = False,
+    strict: bool = False,
+    commit_message: str = "",
+) -> PatchApplyResult:
     """Apply the latest patch from *patch_dir* to *repo_root*."""
     if not patch_dir.is_dir():
         raise FileNotFoundError(f"Patch directory not found: {patch_dir}")
@@ -45,9 +52,23 @@ def apply_latest_patch(repo_root: Path, patch_dir: Path, *, dry_run: bool = Fals
     command = ["bash", str(script), "-d", str(patch_dir)]
     if dry_run:
         command.append("-n")
+    elif commit_message.strip():
+        command.extend(["-c", commit_message.strip()])
     if strict:
         command.append("--strict")
 
+    result = run_process(command, cwd=repo_root, check=False)
+    return PatchApplyResult(
+        command=command,
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def undo_last_commit(repo_root: Path) -> PatchApplyResult:
+    """Undo the latest local commit while keeping changes in the working tree."""
+    command = ["git", "reset", "--mixed", "HEAD~1"]
     result = run_process(command, cwd=repo_root, check=False)
     return PatchApplyResult(
         command=command,

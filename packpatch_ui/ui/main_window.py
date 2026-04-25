@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import shlex
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
@@ -30,7 +29,7 @@ from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
 from packpatch_ui.core.git_repo import GitRepoInfo, list_changed_files, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
-from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_latest_patch_preview, read_patch_preview
+from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_latest_patch_preview, read_patch_preview, undo_last_commit
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
 from packpatch_ui.ui.file_tree import FileTreeWidget
@@ -69,8 +68,7 @@ class MainWindow(QMainWindow):
 
         self.commit_message_edit = QLineEdit(self)
         self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
-        self.copy_commit_message_button = QPushButton("Copy message", self)
-        self.copy_commit_command_button = QPushButton("Copy git commit", self)
+        self.undo_last_commit_button = QPushButton("Undo last commit", self)
 
         self.patch_dir_edit = QLineEdit(self)
         self.patch_dir_edit.setPlaceholderText("Directory with .patch/.diff files, e.g. ~/Downloads")
@@ -179,8 +177,7 @@ class MainWindow(QMainWindow):
         commit_controls = QHBoxLayout()
         commit_controls.addWidget(QLabel("Commit:", widget))
         commit_controls.addWidget(self.commit_message_edit, stretch=1)
-        commit_controls.addWidget(self.copy_commit_message_button)
-        commit_controls.addWidget(self.copy_commit_command_button)
+        commit_controls.addWidget(self.undo_last_commit_button)
 
         patch_controls = QHBoxLayout()
         patch_controls.addWidget(QLabel("Patches:", widget))
@@ -272,8 +269,7 @@ class MainWindow(QMainWindow):
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.file_filter_edit.textChanged.connect(self._file_filter_changed)
-        self.copy_commit_message_button.clicked.connect(self._copy_commit_message)
-        self.copy_commit_command_button.clicked.connect(self._copy_commit_command)
+        self.undo_last_commit_button.clicked.connect(self._undo_last_commit)
 
         self.check_changed_button.clicked.connect(self._select_changed_files)
         self.check_all_button.clicked.connect(self._check_all_files)
@@ -776,8 +772,17 @@ class MainWindow(QMainWindow):
         action = "Dry-running latest patch" if dry_run else "Applying latest patch"
         self._append_log(f"{action}...")
 
+        commit_message = self.commit_message_edit.text().strip() if not dry_run else ""
+        if commit_message:
+            self._append_log("Commit message is set: patch will be applied and committed.")
+
         try:
-            result = apply_latest_patch(self._repo_info.root, patch_dir, dry_run=dry_run)
+            result = apply_latest_patch(
+                self._repo_info.root,
+                patch_dir,
+                dry_run=dry_run,
+                commit_message=commit_message,
+            )
         except FileNotFoundError as error:
             self._append_log(f"Cannot apply patch: {error}")
             self.statusBar().showMessage("Patch apply failed")
@@ -791,34 +796,40 @@ class MainWindow(QMainWindow):
             self._append_log(result.stderr.strip())
 
         if result.succeeded:
-            self.statusBar().showMessage("Patch dry-run completed" if dry_run else "Patch applied")
+            if dry_run:
+                self.statusBar().showMessage("Patch dry-run completed")
+            elif commit_message:
+                self.commit_message_edit.clear()
+                self._append_log("Commit message field cleared after successful commit.")
+                self.statusBar().showMessage("Patch applied and committed")
+            else:
+                self.statusBar().showMessage("Patch applied")
             self._refresh_repository_status()
             self._schedule_autosave()
         else:
             self.statusBar().showMessage(f"Patch command failed with exit code {result.returncode}")
 
-    def _copy_commit_message(self) -> None:
-        message = self.commit_message_edit.text().strip()
-        if not message:
-            self._append_log("Cannot copy commit message: field is empty.")
-            self.statusBar().showMessage("Commit message is empty")
+    def _undo_last_commit(self) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot undo commit: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
             return
 
-        QApplication.clipboard().setText(message)
-        self._append_log(f"Copied commit message: {message}")
-        self.statusBar().showMessage("Commit message copied")
+        self._append_log("Undoing last commit with git reset --mixed HEAD~1...")
+        result = undo_last_commit(self._repo_info.root)
+        self._append_log("Command:")
+        self._append_log("  " + " ".join(result.command))
+        if result.stdout.strip():
+            self._append_log(result.stdout.strip())
+        if result.stderr.strip():
+            self._append_log(result.stderr.strip())
 
-    def _copy_commit_command(self) -> None:
-        message = self.commit_message_edit.text().strip()
-        if not message:
-            self._append_log("Cannot copy git commit command: commit message is empty.")
-            self.statusBar().showMessage("Commit message is empty")
-            return
-
-        command = f"git commit -m {shlex.quote(message)}"
-        QApplication.clipboard().setText(command)
-        self._append_log(f"Copied git commit command: {command}")
-        self.statusBar().showMessage("Git commit command copied")
+        if result.succeeded:
+            self.statusBar().showMessage("Last commit undone")
+            self._refresh_repository_status()
+            self._schedule_autosave()
+        else:
+            self.statusBar().showMessage(f"Undo failed with exit code {result.returncode}")
 
     def _append_log(self, message: str) -> None:
         self.log.append(message)

@@ -12,7 +12,7 @@ Usage: $0 [-d DIR] [-p PATCH] [-n] [-v] [-S] [-s] [-U] [-C] [-c MSG] [--strict]
   -s        force auto-stash (tracked only)
   -U        with -s/default stash, include untracked in stash
   -C        auto-commit after a clean apply/merge when possible
-  -c MSG    commit message (requires -C)
+  -c MSG    auto-commit with MSG after a successful apply/merge
   --strict  only allow clean git apply; do not try 3-way/merge fallbacks
 
 Default strategy:
@@ -82,6 +82,7 @@ maybe_commit() {
         commit_msg="$default_msg"
     fi
     git commit -m "$commit_msg"
+    log "created commit: $(git rev-parse --short HEAD)"
 }
 
 stash_if_needed() {
@@ -250,6 +251,7 @@ try_ancestor_merge() {
                 commit_msg="Merge patch $(basename "$patch_file")"
             fi
             git commit -m "$commit_msg"
+            log "created commit: $(git rev-parse --short HEAD)"
             log "ancestor merge fallback completed with commit"
         else
             log "ancestor merge fallback completed without conflicts"
@@ -308,6 +310,7 @@ while [[ $# -gt 0 ]]; do
             shift
             [[ $# -gt 0 ]] || { usage; exit 2; }
             commit_msg="$1"
+            do_commit=1
             ;;
         --strict)
             strict=1
@@ -335,11 +338,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ $verbose -eq 0 ]] || set -x
-
-if [[ $do_commit -eq 0 && -n "$commit_msg" ]]; then
-    err "-c requires -C"
-    exit 2
-fi
 
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { err "run inside a git repo"; exit 2; }
 root="$(git rev-parse --show-toplevel)"
