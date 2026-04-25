@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QStatusBar,
     QTextEdit,
@@ -27,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from packpatch_ui.config import APP_NAME
-from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
+from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack_archives, list_patch_files
 from packpatch_ui.core.git_repo import (
     GitRepoInfo,
     list_changed_files,
@@ -96,6 +97,8 @@ class MainWindow(QMainWindow):
         self.refresh_artifacts_button = QPushButton("Refresh packs/patches", self)
         self.copy_pack_path_button = QPushButton("Copy pack path", self)
         self.copy_patch_path_button = QPushButton("Copy patch path", self)
+        self.delete_pack_button = QPushButton("Delete pack", self)
+        self.delete_patch_button = QPushButton("Delete patch", self)
         self.pack_list = QListWidget(self)
         self.patch_list = QListWidget(self)
         self.pack_list.setAlternatingRowColors(True)
@@ -207,6 +210,8 @@ class MainWindow(QMainWindow):
         artifact_controls.addStretch(1)
         artifact_controls.addWidget(self.copy_pack_path_button)
         artifact_controls.addWidget(self.copy_patch_path_button)
+        artifact_controls.addWidget(self.delete_pack_button)
+        artifact_controls.addWidget(self.delete_patch_button)
 
         artifact_lists = QHBoxLayout()
         artifact_lists.setSpacing(8)
@@ -319,6 +324,10 @@ class MainWindow(QMainWindow):
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
         self.copy_pack_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.pack_list, "pack"))
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
+        self.delete_pack_button.clicked.connect(lambda: self._delete_selected_artifact(self.pack_list, "pack"))
+        self.delete_patch_button.clicked.connect(
+            lambda: self._delete_selected_artifact(self.patch_list, "patch", include_patch_sidecars=True)
+        )
         self.patch_list.currentItemChanged.connect(lambda *_: self._preview_selected_patch(silent=True))
         self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
         self.repository_status_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
@@ -782,6 +791,59 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(path)
         self._append_log(f"Copied {label} path: {path}")
         self.statusBar().showMessage(f"Copied {label} path")
+
+    def _delete_selected_artifact(
+        self,
+        widget: QListWidget,
+        label: str,
+        *,
+        include_patch_sidecars: bool = False,
+    ) -> None:
+        item = widget.currentItem()
+        if item is None:
+            self._append_log(f"No {label} selected.")
+            self.statusBar().showMessage(f"No {label} selected")
+            return
+
+        path_value = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(path_value, str) or not path_value:
+            self._append_log(f"Selected {label} has no path metadata.")
+            self.statusBar().showMessage(f"Cannot delete {label}")
+            return
+
+        path = Path(path_value).expanduser()
+        sidecar_note = " and its sidecar files" if include_patch_sidecars else ""
+        response = QMessageBox.question(
+            self,
+            f"Delete selected {label}",
+            f"Delete selected {label}{sidecar_note}?\n\n{path}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            self._append_log(f"Delete {label} cancelled.")
+            self.statusBar().showMessage(f"Delete {label} cancelled")
+            return
+
+        try:
+            deleted = delete_artifact(path, include_patch_sidecars=include_patch_sidecars)
+        except (OSError, ValueError) as error:
+            self._append_log(f"Cannot delete {label}: {error}")
+            self.statusBar().showMessage(f"Delete {label} failed")
+            return
+
+        if not deleted:
+            self._append_log(f"No files deleted for selected {label}: {path}")
+            self.statusBar().showMessage(f"No {label} deleted")
+            self._refresh_artifact_lists()
+            return
+
+        deleted_preview = "\n".join(f"  {item}" for item in deleted)
+        self._append_log(f"Deleted {label} artifact files:\n{deleted_preview}")
+        if label == "patch":
+            self.patch_preview.clear()
+        self._refresh_artifact_lists()
+        self.statusBar().showMessage(f"Deleted {label}")
 
     def _check_latest_patch(self) -> None:
         if self._repo_info is None:
