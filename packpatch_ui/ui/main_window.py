@@ -1197,9 +1197,20 @@ class MainWindow(QMainWindow):
 
     def _append_log(self, message: str) -> None:
         """Append log output with lightweight severity-based coloring."""
+        should_follow = self._is_log_scrolled_to_bottom()
         lines = message.splitlines() or [""]
         html_lines = [self._format_log_line(line) for line in lines]
         self.log.append("<br>".join(html_lines))
+        if should_follow:
+            self._scroll_log_to_bottom()
+
+    def _is_log_scrolled_to_bottom(self) -> bool:
+        scrollbar = self.log.verticalScrollBar()
+        return scrollbar.value() >= scrollbar.maximum() - 4
+
+    def _scroll_log_to_bottom(self) -> None:
+        scrollbar = self.log.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
     def _format_log_line(self, line: str) -> str:
         escaped = html.escape(line)
