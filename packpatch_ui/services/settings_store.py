@@ -24,6 +24,7 @@ class AppSession:
     task_name: str = ""
     pack_mode: str = "slice"
     commit_message: str = ""
+    patch_target_mode: str = "latest"
     selected_files: list[str] = field(default_factory=list)
     file_filter: str = ""
     window_geometry: str = ""
@@ -49,6 +50,7 @@ class AppSession:
             task_name=str(data.get("task_name") or ""),
             pack_mode=str(data.get("pack_mode") or "slice"),
             commit_message=str(data.get("commit_message") or ""),
+            patch_target_mode=str(data.get("patch_target_mode") or "latest"),
             selected_files=[str(path) for path in selected_files if str(path)],
             file_filter=str(data.get("file_filter") or ""),
             window_geometry=str(data.get("window_geometry") or ""),

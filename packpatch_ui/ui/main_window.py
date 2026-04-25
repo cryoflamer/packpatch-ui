@@ -91,6 +91,9 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.setPlaceholderText("Directory with .patch/.diff files, e.g. ~/Downloads")
         self.patch_dir_edit.setText(str(Path.home() / "Downloads"))
         self.browse_patch_dir_button = QPushButton("Browse patches...", self)
+        self.patch_target_combo = QComboBox(self)
+        self.patch_target_combo.addItem("latest", "latest")
+        self.patch_target_combo.addItem("selected", "selected")
         self.check_latest_patch_button = QPushButton("Check patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run patch", self)
         self.apply_latest_patch_button = QPushButton("Apply patch", self)
@@ -205,6 +208,8 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(QLabel("Patches:", widget))
         patch_controls.addWidget(self.patch_dir_edit, stretch=1)
         patch_controls.addWidget(self.browse_patch_dir_button)
+        patch_controls.addWidget(QLabel("Patch target:", widget))
+        patch_controls.addWidget(self.patch_target_combo)
         patch_controls.addWidget(self.check_latest_patch_button)
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
@@ -319,6 +324,7 @@ class MainWindow(QMainWindow):
         self.repo_path_edit.returnPressed.connect(self._refresh_repository_status)
         self.repo_path_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.pack_mode_combo.currentIndexChanged.connect(self._pack_mode_changed)
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -388,6 +394,7 @@ class MainWindow(QMainWindow):
             self._set_pack_mode(session.pack_mode)
             self.task_name_edit.setText(session.task_name)
             self.commit_message_edit.setText(session.commit_message)
+            self._set_patch_target_mode(session.patch_target_mode)
             self.file_filter_edit.setText(session.file_filter)
             self.repository_status_section.set_collapsed(session.repository_status_collapsed)
             self.packs_section.set_collapsed(session.latest_packs_collapsed)
@@ -468,6 +475,7 @@ class MainWindow(QMainWindow):
             task_name=self.task_name_edit.text().strip(),
             pack_mode=self._current_pack_mode(),
             commit_message=self.commit_message_edit.text().strip(),
+            patch_target_mode=self._current_patch_target_mode(),
             selected_files=self.file_tree.selected_paths(),
             file_filter=self.file_filter_edit.text().strip(),
             window_geometry=self._encoded_window_geometry(),
@@ -641,6 +649,14 @@ class MainWindow(QMainWindow):
         index = self.pack_mode_combo.findData(mode or "slice")
         self.pack_mode_combo.setCurrentIndex(index if index >= 0 else 0)
 
+    def _current_patch_target_mode(self) -> str:
+        mode = self.patch_target_combo.currentData()
+        return str(mode or "latest")
+
+    def _set_patch_target_mode(self, mode: str) -> None:
+        index = self.patch_target_combo.findData(mode or "latest")
+        self.patch_target_combo.setCurrentIndex(index if index >= 0 else 0)
+
     def _pack_mode_changed(self) -> None:
         if not self.task_name_edit.text().strip():
             self.task_name_edit.setText(default_task_name_for_mode(self._current_pack_mode()))
@@ -775,16 +791,22 @@ class MainWindow(QMainWindow):
             return None
         return Path(path).expanduser()
 
-    def _patch_action_path(self) -> Path | None:
+    def _patch_action_path(self) -> tuple[Path | None, bool]:
+        mode = self._current_patch_target_mode()
+        if mode == "latest":
+            return None, True
+
         paths = self._selected_patch_paths()
-        if len(paths) > 1:
-            names = "\n".join(f"  {path}" for path in paths)
-            self._append_log(f"Cannot run patch action: multiple patches selected. Select exactly one or clear selection for latest.\n{names}")
-            self.statusBar().showMessage("Multiple patches selected")
-            return None
-        if len(paths) == 1:
-            return paths[0]
-        return None
+        if len(paths) != 1:
+            if paths:
+                names = "\n".join(f"  {path}" for path in paths)
+                self._append_log(f"Cannot run patch action: selected mode requires exactly one patch.\n{names}")
+                self.statusBar().showMessage("Select exactly one patch")
+            else:
+                self._append_log("Cannot run patch action: selected mode requires one selected patch.")
+                self.statusBar().showMessage("No patch selected")
+            return None, False
+        return paths[0], True
 
     def _preview_selected_patch(self, *, silent: bool = False) -> None:
         patch_path = self._selected_patch_path()
@@ -900,12 +922,13 @@ class MainWindow(QMainWindow):
             return
 
         patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
-        selected_paths = self._selected_patch_paths()
-        patch_path = self._patch_action_path()
-        if len(selected_paths) > 1:
+        patch_path, ok = self._patch_action_path()
+        if not ok:
             return
+        mode = self._current_patch_target_mode()
         label = "selected patch" if patch_path is not None else "latest patch"
         self._append_log(f"Checking {label}...")
+        self._append_log(f"Patch target mode: {mode}")
 
         try:
             result = check_latest_patch(self._repo_info.root, patch_dir, patch_path=patch_path)
@@ -935,13 +958,14 @@ class MainWindow(QMainWindow):
             return
 
         patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
-        selected_paths = self._selected_patch_paths()
-        patch_path = self._patch_action_path()
-        if len(selected_paths) > 1:
+        patch_path, ok = self._patch_action_path()
+        if not ok:
             return
+        mode = self._current_patch_target_mode()
         label = "selected patch" if patch_path is not None else "latest patch"
         action = f"Dry-running {label}" if dry_run else f"Applying {label}"
         self._append_log(f"{action}...")
+        self._append_log(f"Patch target mode: {mode}")
 
         commit_message = self.commit_message_edit.text().strip() if not dry_run else ""
         if commit_message:
