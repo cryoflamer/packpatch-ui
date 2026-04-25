@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from packpatch_ui.core.artifacts import list_patch_files
+
+MAX_PATCH_PREVIEW_BYTES = 512_000
+
 from packpatch_ui.services.process_runner import run_process
 
 
@@ -52,6 +55,26 @@ def apply_latest_patch(repo_root: Path, patch_dir: Path, *, dry_run: bool = Fals
         stdout=result.stdout,
         stderr=result.stderr,
     )
+
+
+def read_patch_preview(patch_path: Path, *, max_bytes: int = MAX_PATCH_PREVIEW_BYTES) -> tuple[str, bool]:
+    """Return patch text preview and whether preview was truncated."""
+    if not patch_path.is_file():
+        raise FileNotFoundError(f"Patch file not found: {patch_path}")
+
+    data = patch_path.read_bytes()
+    truncated = len(data) > max_bytes
+    if truncated:
+        data = data[:max_bytes]
+    text = data.decode("utf-8", errors="replace")
+    return text, truncated
+
+
+def read_latest_patch_preview(patch_dir: Path, *, max_bytes: int = MAX_PATCH_PREVIEW_BYTES) -> tuple[Path, str, bool]:
+    """Return latest patch path, text preview, and whether preview was truncated."""
+    patch_path = latest_patch_path(patch_dir)
+    text, truncated = read_patch_preview(patch_path, max_bytes=max_bytes)
+    return patch_path, text, truncated
 
 
 def check_latest_patch(repo_root: Path, patch_dir: Path) -> PatchApplyResult:

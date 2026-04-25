@@ -30,7 +30,7 @@ from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
 from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
-from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch
+from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_latest_patch_preview, read_patch_preview
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.ui.file_tree import FileTreeWidget
 
@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.setText(str(Path.home() / "Downloads"))
         self.browse_patch_dir_button = QPushButton("Browse patches...", self)
         self.check_latest_patch_button = QPushButton("Check latest patch", self)
+        self.preview_patch_button = QPushButton("Preview patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run latest patch", self)
         self.apply_latest_patch_button = QPushButton("Apply latest patch", self)
 
@@ -91,6 +92,12 @@ class MainWindow(QMainWindow):
         self.check_all_button = QPushButton("Check all", self)
         self.clear_selection_button = QPushButton("Clear", self)
         self.selection_value = QLabel("0 files selected", self)
+
+        self.patch_preview = QTextEdit(self)
+        self.patch_preview.setReadOnly(True)
+        self.patch_preview.setPlaceholderText("Selected/latest patch preview will appear here.")
+        self.patch_preview.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        self.patch_preview.setMinimumHeight(180)
 
         self.log = QTextEdit(self)
         self.log.setReadOnly(True)
@@ -168,6 +175,7 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(self.patch_dir_edit, stretch=1)
         patch_controls.addWidget(self.browse_patch_dir_button)
         patch_controls.addWidget(self.check_latest_patch_button)
+        patch_controls.addWidget(self.preview_patch_button)
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
 
@@ -205,6 +213,8 @@ class MainWindow(QMainWindow):
         layout.addLayout(artifact_lists, stretch=1)
         layout.addLayout(tree_controls)
         layout.addWidget(self.file_tree, stretch=2)
+        layout.addWidget(QLabel("Patch preview", widget))
+        layout.addWidget(self.patch_preview, stretch=1)
         layout.addWidget(self.log, stretch=1)
         return widget
 
@@ -236,11 +246,13 @@ class MainWindow(QMainWindow):
         self.create_pack_button.clicked.connect(self._create_slice_pack)
         self.browse_patch_dir_button.clicked.connect(self._browse_patch_directory)
         self.check_latest_patch_button.clicked.connect(self._check_latest_patch)
+        self.preview_patch_button.clicked.connect(self._preview_patch)
         self.dry_run_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=True))
         self.apply_latest_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=False))
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
         self.copy_pack_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.pack_list, "pack"))
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
+        self.patch_list.currentItemChanged.connect(lambda *_: self._preview_selected_patch(silent=True))
         self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
 
     def _reload_session_combo(self, *, select_name: str | None = None) -> None:
@@ -564,6 +576,62 @@ class MainWindow(QMainWindow):
         if artifacts:
             widget.setCurrentRow(0)
         return len(artifacts)
+
+    def _selected_patch_path(self) -> Path | None:
+        item = self.patch_list.currentItem()
+        if item is None:
+            return None
+
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(path, str) or not path:
+            return None
+        return Path(path).expanduser()
+
+    def _preview_selected_patch(self, *, silent: bool = False) -> None:
+        patch_path = self._selected_patch_path()
+        if patch_path is None:
+            self.patch_preview.clear()
+            return
+
+        try:
+            text, truncated = read_patch_preview(patch_path)
+        except FileNotFoundError as error:
+            self.patch_preview.setPlainText(str(error))
+            if not silent:
+                self._append_log(f"Cannot preview patch: {error}")
+                self.statusBar().showMessage("Patch preview failed")
+            return
+
+        self._set_patch_preview_text(patch_path, text, truncated)
+        if not silent:
+            self._append_log(f"Previewed patch: {patch_path}")
+            self.statusBar().showMessage("Patch preview loaded")
+
+    def _preview_patch(self) -> None:
+        patch_path = self._selected_patch_path()
+        if patch_path is not None:
+            self._preview_selected_patch(silent=False)
+            return
+
+        patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
+        try:
+            patch_path, text, truncated = read_latest_patch_preview(patch_dir)
+        except FileNotFoundError as error:
+            self.patch_preview.setPlainText(str(error))
+            self._append_log(f"Cannot preview patch: {error}")
+            self.statusBar().showMessage("Patch preview failed")
+            return
+
+        self._set_patch_preview_text(patch_path, text, truncated)
+        self._append_log(f"Previewed patch: {patch_path}")
+        self.statusBar().showMessage("Patch preview loaded")
+
+    def _set_patch_preview_text(self, patch_path: Path, text: str, truncated: bool) -> None:
+        header = f"# {patch_path}\n"
+        if truncated:
+            header += "# Preview truncated to 512 KB.\n"
+        header += "\n"
+        self.patch_preview.setPlainText(header + text)
 
     def _copy_selected_artifact_path(self, widget: QListWidget, label: str) -> None:
         item = widget.currentItem()
