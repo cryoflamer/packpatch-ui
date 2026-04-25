@@ -6,11 +6,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
     QStatusBar,
@@ -20,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from packpatch_ui.config import APP_NAME
+from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
 from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
 from packpatch_ui.core.patch_runner import apply_latest_patch
@@ -53,6 +57,14 @@ class MainWindow(QMainWindow):
         self.browse_patch_dir_button = QPushButton("Browse patches...", self)
         self.dry_run_patch_button = QPushButton("Dry-run latest patch", self)
         self.apply_latest_patch_button = QPushButton("Apply latest patch", self)
+
+        self.refresh_artifacts_button = QPushButton("Refresh packs/patches", self)
+        self.copy_pack_path_button = QPushButton("Copy pack path", self)
+        self.copy_patch_path_button = QPushButton("Copy patch path", self)
+        self.pack_list = QListWidget(self)
+        self.patch_list = QListWidget(self)
+        self.pack_list.setAlternatingRowColors(True)
+        self.patch_list.setAlternatingRowColors(True)
 
         self.file_tree = FileTreeWidget()
         self.check_all_button = QPushButton("Check all", self)
@@ -114,6 +126,22 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
 
+        artifact_controls = QHBoxLayout()
+        artifact_controls.addWidget(self.refresh_artifacts_button)
+        artifact_controls.addStretch(1)
+        artifact_controls.addWidget(self.copy_pack_path_button)
+        artifact_controls.addWidget(self.copy_patch_path_button)
+
+        artifact_lists = QHBoxLayout()
+        pack_column = QVBoxLayout()
+        pack_column.addWidget(QLabel("Latest packs", widget))
+        pack_column.addWidget(self.pack_list)
+        patch_column = QVBoxLayout()
+        patch_column.addWidget(QLabel("Latest patches", widget))
+        patch_column.addWidget(self.patch_list)
+        artifact_lists.addLayout(pack_column, stretch=1)
+        artifact_lists.addLayout(patch_column, stretch=1)
+
         tree_controls = QHBoxLayout()
         tree_controls.addWidget(self.check_all_button)
         tree_controls.addWidget(self.clear_selection_button)
@@ -126,6 +154,8 @@ class MainWindow(QMainWindow):
         layout.addLayout(status_grid)
         layout.addLayout(pack_controls)
         layout.addLayout(patch_controls)
+        layout.addLayout(artifact_controls)
+        layout.addLayout(artifact_lists, stretch=1)
         layout.addLayout(tree_controls)
         layout.addWidget(self.file_tree, stretch=2)
         layout.addWidget(self.log, stretch=1)
@@ -146,6 +176,9 @@ class MainWindow(QMainWindow):
         self.browse_patch_dir_button.clicked.connect(self._browse_patch_directory)
         self.dry_run_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=True))
         self.apply_latest_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=False))
+        self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
+        self.copy_pack_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.pack_list, "pack"))
+        self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
         self.file_tree.itemChanged.connect(lambda *_: self._update_selection_count())
 
     def _browse_repository(self) -> None:
@@ -158,6 +191,7 @@ class MainWindow(QMainWindow):
         selected = QFileDialog.getExistingDirectory(self, "Select patch directory")
         if selected:
             self.patch_dir_edit.setText(selected)
+            self._refresh_artifact_lists()
 
     def _refresh_repository_status(self) -> None:
         raw_path = self.repo_path_edit.text().strip()
@@ -183,6 +217,7 @@ class MainWindow(QMainWindow):
         files = list_repo_files(info.root)
         self.file_tree.set_files(files)
         self._update_selection_count()
+        self._refresh_artifact_lists()
 
         self.statusBar().showMessage("Repository status refreshed")
         self._append_log(
@@ -199,6 +234,8 @@ class MainWindow(QMainWindow):
         self.branch_value.setText("-")
         self.status_value.setText("not available")
         self.file_tree.clear()
+        self.pack_list.clear()
+        self.patch_list.clear()
         self._update_selection_count()
         self.statusBar().showMessage(message)
         self._append_log(message)
@@ -241,8 +278,53 @@ class MainWindow(QMainWindow):
 
         if result.succeeded:
             self.statusBar().showMessage("Slice pack created")
+            self._refresh_artifact_lists()
         else:
             self.statusBar().showMessage(f"Pack creation failed with exit code {result.returncode}")
+
+    def _refresh_artifact_lists(self) -> None:
+        self.pack_list.clear()
+        self.patch_list.clear()
+
+        pack_count = 0
+        if self._repo_info is not None:
+            pack_count = self._populate_artifact_list(self.pack_list, list_pack_archives(self._repo_info.root))
+
+        patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
+        patch_count = self._populate_artifact_list(self.patch_list, list_patch_files(patch_dir))
+
+        self._append_log(
+            "Artifact lists refreshed:\n"
+            f"  packs: {pack_count}\n"
+            f"  patches: {patch_count}"
+        )
+
+    def _populate_artifact_list(self, widget: QListWidget, artifacts: list[ArtifactInfo]) -> int:
+        for artifact in artifacts:
+            item = QListWidgetItem(artifact.display_name)
+            item.setToolTip(str(artifact.path))
+            item.setData(Qt.ItemDataRole.UserRole, str(artifact.path))
+            widget.addItem(item)
+        if artifacts:
+            widget.setCurrentRow(0)
+        return len(artifacts)
+
+    def _copy_selected_artifact_path(self, widget: QListWidget, label: str) -> None:
+        item = widget.currentItem()
+        if item is None:
+            self._append_log(f"No {label} selected.")
+            self.statusBar().showMessage(f"No {label} selected")
+            return
+
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(path, str) or not path:
+            self._append_log(f"Selected {label} has no path metadata.")
+            self.statusBar().showMessage(f"Cannot copy {label} path")
+            return
+
+        QApplication.clipboard().setText(path)
+        self._append_log(f"Copied {label} path: {path}")
+        self.statusBar().showMessage(f"Copied {label} path")
 
     def _apply_latest_patch(self, *, dry_run: bool) -> None:
         if self._repo_info is None:
