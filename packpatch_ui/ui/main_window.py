@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QByteArray, QTimer, Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QAbstractItemView,
     QFileDialog,
     QComboBox,
     QGridLayout,
@@ -103,6 +104,8 @@ class MainWindow(QMainWindow):
         self.patch_list = QListWidget(self)
         self.pack_list.setAlternatingRowColors(True)
         self.patch_list.setAlternatingRowColors(True)
+        self.pack_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.patch_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
         self.file_tree = FileTreeWidget()
         self.file_filter_edit = QLineEdit(self)
@@ -208,23 +211,33 @@ class MainWindow(QMainWindow):
         artifact_controls = QHBoxLayout()
         artifact_controls.addWidget(self.refresh_artifacts_button)
         artifact_controls.addStretch(1)
-        artifact_controls.addWidget(self.copy_pack_path_button)
-        artifact_controls.addWidget(self.copy_patch_path_button)
-        artifact_controls.addWidget(self.delete_pack_button)
-        artifact_controls.addWidget(self.delete_patch_button)
 
         artifact_lists = QHBoxLayout()
         artifact_lists.setSpacing(8)
         pack_column_widget = QWidget(widget)
         pack_column = QVBoxLayout(pack_column_widget)
         pack_column.setContentsMargins(0, 0, 0, 0)
+        pack_column.setSpacing(4)
+        pack_actions = QHBoxLayout()
+        pack_actions.addWidget(self.copy_pack_path_button)
+        pack_actions.addWidget(self.delete_pack_button)
+        pack_actions.addStretch(1)
+        self.delete_pack_button.setText("Delete selected packs")
         self.pack_list.setMaximumHeight(96)
+        pack_column.addLayout(pack_actions)
         pack_column.addWidget(self.pack_list)
 
         patch_column_widget = QWidget(widget)
         patch_column = QVBoxLayout(patch_column_widget)
         patch_column.setContentsMargins(0, 0, 0, 0)
+        patch_column.setSpacing(4)
+        patch_actions = QHBoxLayout()
+        patch_actions.addWidget(self.copy_patch_path_button)
+        patch_actions.addWidget(self.delete_patch_button)
+        patch_actions.addStretch(1)
+        self.delete_patch_button.setText("Delete selected patches")
         self.patch_list.setMaximumHeight(96)
+        patch_column.addLayout(patch_actions)
         patch_column.addWidget(self.patch_list)
 
         self.packs_section = CollapsibleSection("Latest packs", pack_column_widget, collapsed=True, parent=widget)
@@ -324,9 +337,9 @@ class MainWindow(QMainWindow):
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
         self.copy_pack_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.pack_list, "pack"))
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
-        self.delete_pack_button.clicked.connect(lambda: self._delete_selected_artifact(self.pack_list, "pack"))
+        self.delete_pack_button.clicked.connect(lambda: self._delete_selected_artifacts(self.pack_list, "pack"))
         self.delete_patch_button.clicked.connect(
-            lambda: self._delete_selected_artifact(self.patch_list, "patch", include_patch_sidecars=True)
+            lambda: self._delete_selected_artifacts(self.patch_list, "patch", include_patch_sidecars=True)
         )
         self.patch_list.currentItemChanged.connect(lambda *_: self._preview_selected_patch(silent=True))
         self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
@@ -792,58 +805,67 @@ class MainWindow(QMainWindow):
         self._append_log(f"Copied {label} path: {path}")
         self.statusBar().showMessage(f"Copied {label} path")
 
-    def _delete_selected_artifact(
+    def _selected_artifact_paths(self, widget: QListWidget) -> list[Path]:
+        paths: list[Path] = []
+        for item in widget.selectedItems():
+            path_value = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(path_value, str) and path_value:
+                paths.append(Path(path_value).expanduser())
+        return paths
+
+    def _delete_selected_artifacts(
         self,
         widget: QListWidget,
         label: str,
         *,
         include_patch_sidecars: bool = False,
     ) -> None:
-        item = widget.currentItem()
-        if item is None:
+        paths = self._selected_artifact_paths(widget)
+        if not paths:
             self._append_log(f"No {label} selected.")
             self.statusBar().showMessage(f"No {label} selected")
             return
 
-        path_value = item.data(Qt.ItemDataRole.UserRole)
-        if not isinstance(path_value, str) or not path_value:
-            self._append_log(f"Selected {label} has no path metadata.")
-            self.statusBar().showMessage(f"Cannot delete {label}")
-            return
+        sidecar_note = " and their sidecar files" if include_patch_sidecars else ""
+        preview_items = "\n".join(f"  {path}" for path in paths[:10])
+        if len(paths) > 10:
+            preview_items += f"\n  ... and {len(paths) - 10} more"
 
-        path = Path(path_value).expanduser()
-        sidecar_note = " and its sidecar files" if include_patch_sidecars else ""
+        plural_label = f"{label}s" if len(paths) != 1 else label
         response = QMessageBox.question(
             self,
-            f"Delete selected {label}",
-            f"Delete selected {label}{sidecar_note}?\n\n{path}",
+            f"Delete selected {plural_label}",
+            f"Delete {len(paths)} selected {plural_label}{sidecar_note}?\n\n{preview_items}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if response != QMessageBox.StandardButton.Yes:
-            self._append_log(f"Delete {label} cancelled.")
-            self.statusBar().showMessage(f"Delete {label} cancelled")
+            self._append_log(f"Delete {plural_label} cancelled.")
+            self.statusBar().showMessage(f"Delete {plural_label} cancelled")
             return
 
-        try:
-            deleted = delete_artifact(path, include_patch_sidecars=include_patch_sidecars)
-        except (OSError, ValueError) as error:
-            self._append_log(f"Cannot delete {label}: {error}")
-            self.statusBar().showMessage(f"Delete {label} failed")
-            return
+        deleted: list[Path] = []
+        failed: list[str] = []
+        for path in paths:
+            try:
+                deleted.extend(delete_artifact(path, include_patch_sidecars=include_patch_sidecars))
+            except (OSError, ValueError) as error:
+                failed.append(f"{path}: {error}")
 
-        if not deleted:
-            self._append_log(f"No files deleted for selected {label}: {path}")
-            self.statusBar().showMessage(f"No {label} deleted")
-            self._refresh_artifact_lists()
-            return
+        if deleted:
+            deleted_preview = "\n".join(f"  {item}" for item in deleted)
+            self._append_log(f"Deleted {label} artifact files:\n{deleted_preview}")
+        else:
+            self._append_log(f"No files deleted for selected {plural_label}.")
 
-        deleted_preview = "\n".join(f"  {item}" for item in deleted)
-        self._append_log(f"Deleted {label} artifact files:\n{deleted_preview}")
+        if failed:
+            failed_preview = "\n".join(f"  {item}" for item in failed)
+            self._append_log(f"Failed to delete some {plural_label}:\n{failed_preview}")
+
         if label == "patch":
             self.patch_preview.clear()
         self._refresh_artifact_lists()
-        self.statusBar().showMessage(f"Deleted {label}")
+        self.statusBar().showMessage(f"Deleted {len(deleted)} artifact file(s)")
 
     def _check_latest_patch(self) -> None:
         if self._repo_info is None:
