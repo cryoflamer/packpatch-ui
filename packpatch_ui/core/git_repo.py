@@ -34,3 +34,13 @@ def read_git_repo_info(start_dir: Path) -> GitRepoInfo | None:
     branch = run_process(["git", "branch", "--show-current"], cwd=root).stdout.strip()
     status = run_process(["git", "status", "--porcelain"], cwd=root).stdout
     return GitRepoInfo(root=root, branch=branch, is_dirty=bool(status.strip()))
+
+
+def list_repo_files(root: Path, include_untracked: bool = True) -> list[str]:
+    """Return tracked files and, optionally, untracked non-ignored files."""
+    tracked = run_process(["git", "ls-files"], cwd=root).stdout.splitlines()
+    if not include_untracked:
+        return sorted(path for path in tracked if path)
+
+    untracked = run_process(["git", "ls-files", "--others", "--exclude-standard"], cwd=root).stdout.splitlines()
+    return sorted({path for path in [*tracked, *untracked] if path})
