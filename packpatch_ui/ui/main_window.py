@@ -21,11 +21,12 @@ from PySide6.QtWidgets import (
 
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_repo_info
+from packpatch_ui.core.pack_runner import create_slice_pack
 from packpatch_ui.ui.file_tree import FileTreeWidget
 
 
 class MainWindow(QMainWindow):
-    """Main window with repository status and initial file selection controls."""
+    """Main window with repository status, file selection, and pack creation controls."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -40,6 +41,10 @@ class MainWindow(QMainWindow):
         self.root_value = QLabel("-", self)
         self.branch_value = QLabel("-", self)
         self.status_value = QLabel("-", self)
+
+        self.task_name_edit = QLineEdit(self)
+        self.task_name_edit.setPlaceholderText("Task name for slice pack, e.g. fix-ui")
+        self.create_pack_button = QPushButton("Create slice pack", self)
 
         self.file_tree = FileTreeWidget()
         self.check_all_button = QPushButton("Check all", self)
@@ -68,8 +73,7 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 22px; font-weight: 600;")
 
         description = QLabel(
-            "Select a repository and refresh its status. Use the file tree to prepare "
-            "a slice selection for the next pack creation milestone.",
+            "Select a repository, choose files, and create a slice pack for the PackPatch workflow.",
             widget,
         )
         description.setWordWrap(True)
@@ -90,6 +94,11 @@ class MainWindow(QMainWindow):
         status_grid.addWidget(self.status_value, 2, 1)
         status_grid.setColumnStretch(1, 1)
 
+        pack_controls = QHBoxLayout()
+        pack_controls.addWidget(QLabel("Task:", widget))
+        pack_controls.addWidget(self.task_name_edit, stretch=1)
+        pack_controls.addWidget(self.create_pack_button)
+
         tree_controls = QHBoxLayout()
         tree_controls.addWidget(self.check_all_button)
         tree_controls.addWidget(self.clear_selection_button)
@@ -100,6 +109,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(description)
         layout.addLayout(repo_row)
         layout.addLayout(status_grid)
+        layout.addLayout(pack_controls)
         layout.addLayout(tree_controls)
         layout.addWidget(self.file_tree, stretch=2)
         layout.addWidget(self.log, stretch=1)
@@ -116,6 +126,7 @@ class MainWindow(QMainWindow):
         self.repo_path_edit.returnPressed.connect(self._refresh_repository_status)
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
+        self.create_pack_button.clicked.connect(self._create_slice_pack)
         self.file_tree.itemChanged.connect(lambda *_: self._update_selection_count())
 
     def _browse_repository(self) -> None:
@@ -179,6 +190,35 @@ class MainWindow(QMainWindow):
     def _update_selection_count(self) -> None:
         count = len(self.file_tree.selected_paths())
         self.selection_value.setText(f"{count} file{'s' if count != 1 else ''} selected")
+
+    def _create_slice_pack(self) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot create pack: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
+            return
+
+        selected_files = self.file_tree.selected_paths()
+        task_name = self.task_name_edit.text().strip()
+
+        self._append_log("Creating slice pack...")
+        try:
+            result = create_slice_pack(self._repo_info.root, task_name, selected_files)
+        except (FileNotFoundError, ValueError) as error:
+            self._append_log(f"Cannot create pack: {error}")
+            self.statusBar().showMessage("Pack creation failed")
+            return
+
+        self._append_log("Command:")
+        self._append_log("  " + " ".join(result.command))
+        if result.stdout.strip():
+            self._append_log(result.stdout.strip())
+        if result.stderr.strip():
+            self._append_log(result.stderr.strip())
+
+        if result.succeeded:
+            self.statusBar().showMessage("Slice pack created")
+        else:
+            self.statusBar().showMessage(f"Pack creation failed with exit code {result.returncode}")
 
     def _append_log(self, message: str) -> None:
         self.log.append(message)
