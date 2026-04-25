@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
-from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_repo_info
+from packpatch_ui.core.git_repo import GitRepoInfo, list_changed_files, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
 from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_latest_patch_preview, read_patch_preview
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         self.patch_list.setAlternatingRowColors(True)
 
         self.file_tree = FileTreeWidget()
+        self.check_changed_button = QPushButton("Select changed", self)
         self.check_all_button = QPushButton("Check all", self)
         self.clear_selection_button = QPushButton("Clear", self)
         self.selection_value = QLabel("0 files selected", self)
@@ -219,6 +220,7 @@ class MainWindow(QMainWindow):
         file_tree_layout.setSpacing(4)
 
         tree_controls = QHBoxLayout()
+        tree_controls.addWidget(self.check_changed_button)
         tree_controls.addWidget(self.check_all_button)
         tree_controls.addWidget(self.clear_selection_button)
         tree_controls.addStretch(1)
@@ -268,6 +270,7 @@ class MainWindow(QMainWindow):
         self.copy_commit_message_button.clicked.connect(self._copy_commit_message)
         self.copy_commit_command_button.clicked.connect(self._copy_commit_command)
 
+        self.check_changed_button.clicked.connect(self._select_changed_files)
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
         self.create_pack_button.clicked.connect(self._create_slice_pack)
@@ -552,6 +555,24 @@ class MainWindow(QMainWindow):
         self._update_selection_count()
         self.statusBar().showMessage(message)
         self._append_log(message)
+
+    def _select_changed_files(self) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot select changed files: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
+            return
+
+        changed_files = list_changed_files(self._repo_info.root)
+        self.file_tree.set_selected_paths(changed_files)
+        self._selection_changed()
+        if changed_files:
+            preview = "\n".join(f"  {path}" for path in changed_files[:50])
+            suffix = "" if len(changed_files) <= 50 else f"\n  ... and {len(changed_files) - 50} more"
+            self._append_log(f"Selected changed files ({len(changed_files)}):\n{preview}{suffix}")
+            self.statusBar().showMessage(f"Selected {len(changed_files)} changed file(s)")
+        else:
+            self._append_log("No changed or untracked files found.")
+            self.statusBar().showMessage("No changed files")
 
     def _check_all_files(self) -> None:
         self.file_tree.check_all()
