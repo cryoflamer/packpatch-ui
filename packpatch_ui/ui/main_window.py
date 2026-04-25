@@ -27,7 +27,13 @@ from PySide6.QtWidgets import (
 
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
-from packpatch_ui.core.git_repo import GitRepoInfo, list_changed_files, list_repo_files, read_git_repo_info
+from packpatch_ui.core.git_repo import (
+    GitRepoInfo,
+    list_changed_files,
+    list_recent_commits,
+    list_repo_files,
+    read_git_repo_info,
+)
 from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
 from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_patch_preview, undo_last_commit
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
