@@ -9,6 +9,19 @@ from packpatch_ui.services.process_runner import run_process
 
 
 @dataclass(frozen=True)
+class GitCommitInfo:
+    """Short git commit entry shown by the UI."""
+
+    short_hash: str
+    subject: str
+
+    @property
+    def display_name(self) -> str:
+        """Return a compact one-line commit label."""
+        return f"{self.short_hash} {self.subject}"
+
+
+@dataclass(frozen=True)
 class GitRepoInfo:
     """Minimal git repository information shown by the UI."""
 
@@ -52,3 +65,21 @@ def list_repo_files(root: Path, include_untracked: bool = True) -> list[str]:
 
     untracked = run_process(["git", "ls-files", "--others", "--exclude-standard"], cwd=root).stdout.splitlines()
     return sorted({path for path in [*tracked, *untracked] if path})
+
+
+def list_recent_commits(root: Path, *, limit: int = 20) -> list[GitCommitInfo]:
+    """Return recent commits as short hash + subject entries."""
+    result = run_process(["git", "log", "--oneline", "--decorate", f"-n{limit}"], cwd=root, check=False)
+    if result.returncode != 0:
+        return []
+
+    commits: list[GitCommitInfo] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split(maxsplit=1)
+        short_hash = parts[0]
+        subject = parts[1] if len(parts) > 1 else ""
+        commits.append(GitCommitInfo(short_hash=short_hash, subject=subject))
+    return commits

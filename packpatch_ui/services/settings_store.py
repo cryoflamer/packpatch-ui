@@ -32,6 +32,7 @@ class AppSession:
     repository_status_collapsed: bool = False
     file_tree_collapsed: bool = False
     log_collapsed: bool = False
+    git_commits_collapsed: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppSession":
@@ -55,6 +56,7 @@ class AppSession:
             repository_status_collapsed=bool(data.get("repository_status_collapsed", False)),
             file_tree_collapsed=bool(data.get("file_tree_collapsed", False)),
             log_collapsed=bool(data.get("log_collapsed", False)),
+            git_commits_collapsed=bool(data.get("git_commits_collapsed", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:

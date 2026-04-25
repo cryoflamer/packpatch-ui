@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
-from packpatch_ui.core.git_repo import GitRepoInfo, list_changed_files, list_repo_files, read_git_repo_info
+from packpatch_ui.core.git_repo import GitRepoInfo, list_changed_files, list_recent_commits, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
 from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_latest_patch_preview, read_patch_preview, undo_last_commit
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
@@ -69,6 +69,10 @@ class MainWindow(QMainWindow):
         self.commit_message_edit = QLineEdit(self)
         self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
         self.undo_last_commit_button = QPushButton("Undo last commit", self)
+        self.refresh_commits_button = QPushButton("Refresh commits", self)
+        self.copy_commit_hash_button = QPushButton("Copy hash", self)
+        self.commit_list = QListWidget(self)
+        self.commit_list.setAlternatingRowColors(True)
 
         self.patch_dir_edit = QLineEdit(self)
         self.patch_dir_edit.setPlaceholderText("Directory with .patch/.diff files, e.g. ~/Downloads")
@@ -177,7 +181,6 @@ class MainWindow(QMainWindow):
         commit_controls = QHBoxLayout()
         commit_controls.addWidget(QLabel("Commit:", widget))
         commit_controls.addWidget(self.commit_message_edit, stretch=1)
-        commit_controls.addWidget(self.undo_last_commit_button)
 
         patch_controls = QHBoxLayout()
         patch_controls.addWidget(QLabel("Patches:", widget))
@@ -231,7 +234,22 @@ class MainWindow(QMainWindow):
 
         self.file_tree_section = CollapsibleSection("Repository files", file_tree_widget, collapsed=False, parent=widget)
         self.patch_preview_section = CollapsibleSection("Patch preview", self.patch_preview, collapsed=True, parent=widget)
+
+        commit_history_widget = QWidget(widget)
+        commit_history_layout = QVBoxLayout(commit_history_widget)
+        commit_history_layout.setContentsMargins(0, 0, 0, 0)
+        commit_history_layout.setSpacing(4)
+        commit_history_controls = QHBoxLayout()
+        commit_history_controls.addWidget(self.refresh_commits_button)
+        commit_history_controls.addWidget(self.copy_commit_hash_button)
+        commit_history_controls.addWidget(self.undo_last_commit_button)
+        commit_history_controls.addStretch(1)
+        self.commit_list.setMinimumHeight(160)
+        commit_history_layout.addLayout(commit_history_controls)
+        commit_history_layout.addWidget(self.commit_list, stretch=1)
+
         self.log_section = CollapsibleSection("Log", self.log, collapsed=False, parent=widget)
+        self.git_commits_section = CollapsibleSection("Git commits", commit_history_widget, collapsed=False, parent=widget)
 
         layout.addWidget(title)
         layout.addWidget(description)
@@ -245,7 +263,12 @@ class MainWindow(QMainWindow):
         layout.addLayout(artifact_lists)
         layout.addWidget(self.file_tree_section, stretch=2)
         layout.addWidget(self.patch_preview_section)
-        layout.addWidget(self.log_section, stretch=3)
+
+        bottom_workspace = QHBoxLayout()
+        bottom_workspace.setSpacing(8)
+        bottom_workspace.addWidget(self.log_section, stretch=3)
+        bottom_workspace.addWidget(self.git_commits_section, stretch=2)
+        layout.addLayout(bottom_workspace, stretch=3)
         return widget
 
     def _build_status_bar(self) -> QStatusBar:
@@ -270,6 +293,8 @@ class MainWindow(QMainWindow):
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.file_filter_edit.textChanged.connect(self._file_filter_changed)
         self.undo_last_commit_button.clicked.connect(self._undo_last_commit)
+        self.refresh_commits_button.clicked.connect(self._refresh_commit_list)
+        self.copy_commit_hash_button.clicked.connect(self._copy_selected_commit_hash)
 
         self.check_changed_button.clicked.connect(self._select_changed_files)
         self.check_all_button.clicked.connect(self._check_all_files)
@@ -291,6 +316,7 @@ class MainWindow(QMainWindow):
         self.file_tree_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.patch_preview_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.log_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
+        self.git_commits_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
 
     def _reload_session_combo(self, *, select_name: str | None = None) -> None:
         sessions = self._session_store.load_sessions()
@@ -333,6 +359,7 @@ class MainWindow(QMainWindow):
             self.file_tree_section.set_collapsed(session.file_tree_collapsed)
             self.patch_preview_section.set_collapsed(session.patch_preview_collapsed)
             self.log_section.set_collapsed(session.log_collapsed)
+            self.git_commits_section.set_collapsed(session.git_commits_collapsed)
         finally:
             self._loading_session = False
 
@@ -412,6 +439,7 @@ class MainWindow(QMainWindow):
             repository_status_collapsed=self.repository_status_section.is_collapsed(),
             file_tree_collapsed=self.file_tree_section.is_collapsed(),
             log_collapsed=self.log_section.is_collapsed(),
+            git_commits_collapsed=self.git_commits_section.is_collapsed(),
         )
 
     def _schedule_autosave(self) -> None:
@@ -526,6 +554,7 @@ class MainWindow(QMainWindow):
             self.file_tree.set_selected_paths(normalized_selection)
         self._update_selection_count()
         self._refresh_artifact_lists()
+        self._refresh_commit_list(log_result=False)
         self._schedule_autosave()
 
         self.statusBar().showMessage("Repository status refreshed")
@@ -556,6 +585,7 @@ class MainWindow(QMainWindow):
         self.file_tree.clear()
         self.pack_list.clear()
         self.patch_list.clear()
+        self.commit_list.clear()
         self._update_selection_count()
         self.statusBar().showMessage(message)
         self._append_log(message)
@@ -830,6 +860,45 @@ class MainWindow(QMainWindow):
             self._schedule_autosave()
         else:
             self.statusBar().showMessage(f"Undo failed with exit code {result.returncode}")
+
+    def _refresh_commit_list(self, *, log_result: bool = True) -> None:
+        self.commit_list.clear()
+        if self._repo_info is None:
+            if log_result:
+                self._append_log("Cannot refresh commits: no git repository selected.")
+                self.statusBar().showMessage("No git repository selected")
+            return
+
+        commits = list_recent_commits(self._repo_info.root, limit=20)
+        for commit in commits:
+            item = QListWidgetItem(commit.display_name)
+            item.setToolTip(commit.display_name)
+            item.setData(Qt.ItemDataRole.UserRole, commit.short_hash)
+            self.commit_list.addItem(item)
+
+        if commits:
+            self.commit_list.setCurrentRow(0)
+
+        if log_result:
+            self._append_log(f"Git commits refreshed: {len(commits)}")
+            self.statusBar().showMessage("Git commits refreshed")
+
+    def _copy_selected_commit_hash(self) -> None:
+        item = self.commit_list.currentItem()
+        if item is None:
+            self._append_log("No commit selected.")
+            self.statusBar().showMessage("No commit selected")
+            return
+
+        commit_hash = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(commit_hash, str) or not commit_hash:
+            self._append_log("Selected commit has no hash metadata.")
+            self.statusBar().showMessage("Cannot copy commit hash")
+            return
+
+        QApplication.clipboard().setText(commit_hash)
+        self._append_log(f"Copied commit hash: {commit_hash}")
+        self.statusBar().showMessage("Copied commit hash")
 
     def _append_log(self, message: str) -> None:
         self.log.append(message)
