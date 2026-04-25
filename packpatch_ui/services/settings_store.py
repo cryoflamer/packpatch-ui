@@ -25,6 +25,9 @@ class AppSession:
     commit_message: str = ""
     selected_files: list[str] = field(default_factory=list)
     window_geometry: str = ""
+    latest_packs_collapsed: bool = True
+    latest_patches_collapsed: bool = False
+    patch_preview_collapsed: bool = True
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppSession":
@@ -41,6 +44,9 @@ class AppSession:
             commit_message=str(data.get("commit_message") or ""),
             selected_files=[str(path) for path in selected_files if str(path)],
             window_geometry=str(data.get("window_geometry") or ""),
+            latest_packs_collapsed=bool(data.get("latest_packs_collapsed", True)),
+            latest_patches_collapsed=bool(data.get("latest_patches_collapsed", False)),
+            patch_preview_collapsed=bool(data.get("patch_preview_collapsed", True)),
         )
 
     def to_dict(self) -> dict[str, Any]:

@@ -32,6 +32,7 @@ from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_re
 from packpatch_ui.core.pack_runner import create_slice_pack
 from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_latest_patch_preview, read_patch_preview
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
+from packpatch_ui.ui.collapsible_section import CollapsibleSection
 from packpatch_ui.ui.file_tree import FileTreeWidget
 
 
@@ -186,14 +187,20 @@ class MainWindow(QMainWindow):
         artifact_controls.addWidget(self.copy_patch_path_button)
 
         artifact_lists = QHBoxLayout()
-        pack_column = QVBoxLayout()
-        pack_column.addWidget(QLabel("Latest packs", widget))
+        pack_column_widget = QWidget(widget)
+        pack_column = QVBoxLayout(pack_column_widget)
+        pack_column.setContentsMargins(0, 0, 0, 0)
         pack_column.addWidget(self.pack_list)
-        patch_column = QVBoxLayout()
-        patch_column.addWidget(QLabel("Latest patches", widget))
+
+        patch_column_widget = QWidget(widget)
+        patch_column = QVBoxLayout(patch_column_widget)
+        patch_column.setContentsMargins(0, 0, 0, 0)
         patch_column.addWidget(self.patch_list)
-        artifact_lists.addLayout(pack_column, stretch=1)
-        artifact_lists.addLayout(patch_column, stretch=1)
+
+        self.packs_section = CollapsibleSection("Latest packs", pack_column_widget, collapsed=True, parent=widget)
+        self.patches_section = CollapsibleSection("Latest patches", patch_column_widget, collapsed=False, parent=widget)
+        artifact_lists.addWidget(self.packs_section, stretch=1)
+        artifact_lists.addWidget(self.patches_section, stretch=1)
 
         tree_controls = QHBoxLayout()
         tree_controls.addWidget(self.check_all_button)
@@ -211,10 +218,11 @@ class MainWindow(QMainWindow):
         layout.addLayout(patch_controls)
         layout.addLayout(artifact_controls)
         layout.addLayout(artifact_lists, stretch=1)
+        self.patch_preview_section = CollapsibleSection("Patch preview", self.patch_preview, collapsed=True, parent=widget)
+
         layout.addLayout(tree_controls)
         layout.addWidget(self.file_tree, stretch=2)
-        layout.addWidget(QLabel("Patch preview", widget))
-        layout.addWidget(self.patch_preview, stretch=1)
+        layout.addWidget(self.patch_preview_section, stretch=1)
         layout.addWidget(self.log, stretch=1)
         return widget
 
@@ -254,6 +262,9 @@ class MainWindow(QMainWindow):
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
         self.patch_list.currentItemChanged.connect(lambda *_: self._preview_selected_patch(silent=True))
         self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
+        self.packs_section.toggled.connect(lambda *_: self._schedule_autosave())
+        self.patches_section.toggled.connect(lambda *_: self._schedule_autosave())
+        self.patch_preview_section.toggled.connect(lambda *_: self._schedule_autosave())
 
     def _reload_session_combo(self, *, select_name: str | None = None) -> None:
         sessions = self._session_store.load_sessions()
@@ -289,6 +300,9 @@ class MainWindow(QMainWindow):
             self.patch_dir_edit.setText(session.patch_dir or str(Path.home() / "Downloads"))
             self.task_name_edit.setText(session.task_name)
             self.commit_message_edit.setText(session.commit_message)
+            self.packs_section.set_collapsed(session.latest_packs_collapsed)
+            self.patches_section.set_collapsed(session.latest_patches_collapsed)
+            self.patch_preview_section.set_collapsed(session.patch_preview_collapsed)
         finally:
             self._loading_session = False
 
@@ -361,6 +375,9 @@ class MainWindow(QMainWindow):
             commit_message=self.commit_message_edit.text().strip(),
             selected_files=self.file_tree.selected_paths(),
             window_geometry=self._encoded_window_geometry(),
+            latest_packs_collapsed=self.packs_section.is_collapsed(),
+            latest_patches_collapsed=self.patches_section.is_collapsed(),
+            patch_preview_collapsed=self.patch_preview_section.is_collapsed(),
         )
 
     def _schedule_autosave(self) -> None:
@@ -604,6 +621,7 @@ class MainWindow(QMainWindow):
 
         self._set_patch_preview_text(patch_path, text, truncated)
         if not silent:
+            self.patch_preview_section.set_collapsed(False)
             self._append_log(f"Previewed patch: {patch_path}")
             self.statusBar().showMessage("Patch preview loaded")
 
@@ -623,6 +641,7 @@ class MainWindow(QMainWindow):
             return
 
         self._set_patch_preview_text(patch_path, text, truncated)
+        self.patch_preview_section.set_collapsed(False)
         self._append_log(f"Previewed patch: {patch_path}")
         self.statusBar().showMessage("Patch preview loaded")
 
