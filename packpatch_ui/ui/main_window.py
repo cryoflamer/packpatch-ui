@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QByteArray, QTimer, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -42,6 +43,7 @@ class MainWindow(QMainWindow):
         self._session_store = SessionStore()
         self._loading_session = False
         self._current_session_name = DEFAULT_SESSION_NAME
+        self._geometry_restore_done = False
 
         self.session_combo = QComboBox(self)
         self.new_session_button = QPushButton("New", self)
@@ -99,6 +101,9 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._reload_session_combo(select_name=DEFAULT_SESSION_NAME)
         self._load_current_session()
+        if not self._geometry_restore_done:
+            self._center_on_primary_screen()
+            self._geometry_restore_done = True
 
     def _build_central_widget(self) -> QWidget:
         widget = QWidget(self)
@@ -255,6 +260,8 @@ class MainWindow(QMainWindow):
         finally:
             self._loading_session = False
 
+        self._restore_window_geometry(session.window_geometry)
+
         if session.repo_path:
             self._refresh_repository_status(selected_files=session.selected_files)
         else:
@@ -320,6 +327,7 @@ class MainWindow(QMainWindow):
             patch_dir=self.patch_dir_edit.text().strip(),
             task_name=self.task_name_edit.text().strip(),
             selected_files=self.file_tree.selected_paths(),
+            window_geometry=self._encoded_window_geometry(),
         )
 
     def _schedule_autosave(self) -> None:
@@ -332,6 +340,59 @@ class MainWindow(QMainWindow):
             return
         self._session_store.upsert_session(self._current_session_snapshot(self._current_session_name))
         self.statusBar().showMessage("Session autosaved")
+
+
+    def _encoded_window_geometry(self) -> str:
+        geometry = self.saveGeometry()
+        encoded = geometry.toBase64().data()
+        return encoded.decode("ascii")
+
+    def _restore_window_geometry(self, encoded_geometry: str) -> None:
+        if not encoded_geometry:
+            self._center_on_primary_screen()
+            self._geometry_restore_done = True
+            return
+
+        try:
+            raw = base64.b64decode(encoded_geometry.encode("ascii"), validate=True)
+        except (ValueError, UnicodeEncodeError):
+            self._center_on_primary_screen()
+            self._geometry_restore_done = True
+            return
+
+        if not raw or not self.restoreGeometry(QByteArray(raw)):
+            self._center_on_primary_screen()
+            self._geometry_restore_done = True
+            return
+
+        if not self._is_window_visible_on_any_screen():
+            self._center_on_primary_screen()
+        self._geometry_restore_done = True
+
+    def _center_on_primary_screen(self) -> None:
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+        available_geometry = screen.availableGeometry()
+        frame_geometry = self.frameGeometry()
+        frame_geometry.moveCenter(available_geometry.center())
+        self.move(frame_geometry.topLeft())
+
+    def _is_window_visible_on_any_screen(self) -> bool:
+        window_geometry = self.frameGeometry()
+        return any(screen.availableGeometry().intersects(window_geometry) for screen in QApplication.screens())
+
+    def moveEvent(self, event) -> None:  # noqa: N802
+        super().moveEvent(event)
+        self._schedule_autosave()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._schedule_autosave()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self._autosave_current_session()
+        super().closeEvent(event)
 
     def _browse_repository(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "Select git repository")
