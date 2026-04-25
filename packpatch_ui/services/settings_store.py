@@ -24,6 +24,7 @@ class AppSession:
     task_name: str = ""
     commit_message: str = ""
     selected_files: list[str] = field(default_factory=list)
+    file_filter: str = ""
     window_geometry: str = ""
     latest_packs_collapsed: bool = True
     latest_patches_collapsed: bool = False
@@ -46,6 +47,7 @@ class AppSession:
             task_name=str(data.get("task_name") or ""),
             commit_message=str(data.get("commit_message") or ""),
             selected_files=[str(path) for path in selected_files if str(path)],
+            file_filter=str(data.get("file_filter") or ""),
             window_geometry=str(data.get("window_geometry") or ""),
             latest_packs_collapsed=bool(data.get("latest_packs_collapsed", True)),
             latest_patches_collapsed=bool(data.get("latest_patches_collapsed", False)),

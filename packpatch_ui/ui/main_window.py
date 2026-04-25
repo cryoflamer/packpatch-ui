@@ -90,6 +90,8 @@ class MainWindow(QMainWindow):
         self.patch_list.setAlternatingRowColors(True)
 
         self.file_tree = FileTreeWidget()
+        self.file_filter_edit = QLineEdit(self)
+        self.file_filter_edit.setPlaceholderText("Filter files, e.g. main_window.py, tools/, docs/")
         self.check_changed_button = QPushButton("Select changed", self)
         self.check_all_button = QPushButton("Check all", self)
         self.clear_selection_button = QPushButton("Clear", self)
@@ -220,6 +222,8 @@ class MainWindow(QMainWindow):
         file_tree_layout.setSpacing(4)
 
         tree_controls = QHBoxLayout()
+        tree_controls.addWidget(QLabel("Filter:", widget))
+        tree_controls.addWidget(self.file_filter_edit, stretch=1)
         tree_controls.addWidget(self.check_changed_button)
         tree_controls.addWidget(self.check_all_button)
         tree_controls.addWidget(self.clear_selection_button)
@@ -267,6 +271,7 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.file_filter_edit.textChanged.connect(self._file_filter_changed)
         self.copy_commit_message_button.clicked.connect(self._copy_commit_message)
         self.copy_commit_command_button.clicked.connect(self._copy_commit_command)
 
@@ -325,6 +330,7 @@ class MainWindow(QMainWindow):
             self.patch_dir_edit.setText(session.patch_dir or str(Path.home() / "Downloads"))
             self.task_name_edit.setText(session.task_name)
             self.commit_message_edit.setText(session.commit_message)
+            self.file_filter_edit.setText(session.file_filter)
             self.repository_status_section.set_collapsed(session.repository_status_collapsed)
             self.packs_section.set_collapsed(session.latest_packs_collapsed)
             self.patches_section.set_collapsed(session.latest_patches_collapsed)
@@ -402,6 +408,7 @@ class MainWindow(QMainWindow):
             task_name=self.task_name_edit.text().strip(),
             commit_message=self.commit_message_edit.text().strip(),
             selected_files=self.file_tree.selected_paths(),
+            file_filter=self.file_filter_edit.text().strip(),
             window_geometry=self._encoded_window_geometry(),
             latest_packs_collapsed=self.packs_section.is_collapsed(),
             latest_patches_collapsed=self.patches_section.is_collapsed(),
@@ -517,6 +524,7 @@ class MainWindow(QMainWindow):
 
         files = list_repo_files(info.root)
         self.file_tree.set_files(files)
+        self.file_tree.set_filter(self.file_filter_edit.text())
         normalized_selection = self._normalize_selected_files(selected_files)
         if normalized_selection is not None:
             self.file_tree.set_selected_paths(normalized_selection)
@@ -583,6 +591,11 @@ class MainWindow(QMainWindow):
         self._selection_changed()
 
     def _selection_changed(self) -> None:
+        self._update_selection_count()
+        self._schedule_autosave()
+
+    def _file_filter_changed(self, text: str) -> None:
+        self.file_tree.set_filter(text)
         self._update_selection_count()
         self._schedule_autosave()
 
