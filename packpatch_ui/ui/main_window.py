@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import html
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
@@ -921,4 +922,70 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Copied commit hash")
 
     def _append_log(self, message: str) -> None:
-        self.log.append(message)
+        """Append log output with lightweight severity-based coloring."""
+        lines = message.splitlines() or [""]
+        html_lines = [self._format_log_line(line) for line in lines]
+        self.log.append("<br>".join(html_lines))
+
+    def _format_log_line(self, line: str) -> str:
+        escaped = html.escape(line)
+        lower = line.lower()
+
+        if self._is_error_log_line(lower):
+            return f'<span style="color:#b00020; font-weight:600;">{escaped}</span>'
+        if self._is_warning_log_line(lower):
+            return f'<span style="color:#9a6700; font-weight:600;">{escaped}</span>'
+        if self._is_success_log_line(line, lower):
+            return f'<span style="color:#1a7f37; font-weight:600;">{escaped}</span>'
+        if self._is_command_log_line(line):
+            return f'<span style="font-family:monospace; color:#6639ba;">{escaped}</span>'
+        if self._is_path_log_line(line):
+            return f'<span style="font-family:monospace; color:#0969da;">{escaped}</span>'
+
+        return escaped
+
+    @staticmethod
+    def _is_error_log_line(lower: str) -> bool:
+        error_tokens = (
+            "error",
+            "failed",
+            "failure",
+            "traceback",
+            "exception",
+            "cannot ",
+            "could not",
+            "exit code",
+        )
+        return any(token in lower for token in error_tokens)
+
+    @staticmethod
+    def _is_warning_log_line(lower: str) -> bool:
+        warning_tokens = ("warning", "fallback", "dirty", "conflict", "partial")
+        return any(token in lower for token in warning_tokens)
+
+    @staticmethod
+    def _is_success_log_line(line: str, lower: str) -> bool:
+        success_tokens = (
+            " ok",
+            "ok:",
+            "created",
+            "applied",
+            "committed",
+            "completed",
+            "refreshed",
+            "copied",
+            "loaded",
+            "saved",
+            "cleared",
+        )
+        return line.startswith("OK") or any(token in lower for token in success_tokens)
+
+    @staticmethod
+    def _is_command_log_line(line: str) -> bool:
+        stripped = line.strip()
+        return stripped == "Command:" or stripped.startswith(("bash ", "git ", "python ", "tar "))
+
+    @staticmethod
+    def _is_path_log_line(line: str) -> bool:
+        stripped = line.strip()
+        return stripped.startswith(("/", "~/")) or stripped.endswith((".patch", ".diff", ".tar.gz"))
