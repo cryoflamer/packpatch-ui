@@ -30,7 +30,7 @@ from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
 from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
-from packpatch_ui.core.patch_runner import apply_latest_patch
+from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.ui.file_tree import FileTreeWidget
 
@@ -75,6 +75,7 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.setPlaceholderText("Directory with .patch/.diff files, e.g. ~/Downloads")
         self.patch_dir_edit.setText(str(Path.home() / "Downloads"))
         self.browse_patch_dir_button = QPushButton("Browse patches...", self)
+        self.check_latest_patch_button = QPushButton("Check latest patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run latest patch", self)
         self.apply_latest_patch_button = QPushButton("Apply latest patch", self)
 
@@ -166,6 +167,7 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(QLabel("Patches:", widget))
         patch_controls.addWidget(self.patch_dir_edit, stretch=1)
         patch_controls.addWidget(self.browse_patch_dir_button)
+        patch_controls.addWidget(self.check_latest_patch_button)
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
 
@@ -233,6 +235,7 @@ class MainWindow(QMainWindow):
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
         self.create_pack_button.clicked.connect(self._create_slice_pack)
         self.browse_patch_dir_button.clicked.connect(self._browse_patch_directory)
+        self.check_latest_patch_button.clicked.connect(self._check_latest_patch)
         self.dry_run_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=True))
         self.apply_latest_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=False))
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
@@ -578,6 +581,36 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(path)
         self._append_log(f"Copied {label} path: {path}")
         self.statusBar().showMessage(f"Copied {label} path")
+
+    def _check_latest_patch(self) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot check patch: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
+            return
+
+        patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
+        self._append_log("Checking latest patch...")
+
+        try:
+            result = check_latest_patch(self._repo_info.root, patch_dir)
+        except FileNotFoundError as error:
+            self._append_log(f"Cannot check patch: {error}")
+            self.statusBar().showMessage("Patch check failed")
+            return
+
+        self._append_log("Command:")
+        self._append_log("  " + " ".join(result.command))
+        if result.stdout.strip():
+            self._append_log(result.stdout.strip())
+        if result.stderr.strip():
+            self._append_log(result.stderr.strip())
+
+        if result.succeeded:
+            self._append_log("Patch check OK: clean apply is possible.")
+            self.statusBar().showMessage("Patch check OK")
+        else:
+            self._append_log("Patch check failed: clean apply is not possible; Apply latest patch may use fallback.")
+            self.statusBar().showMessage(f"Patch check failed with exit code {result.returncode}")
 
     def _apply_latest_patch(self, *, dry_run: bool) -> None:
         if self._repo_info is None:
