@@ -135,7 +135,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._build_central_widget())
         self.setStatusBar(self._build_status_bar())
         self._connect_signals()
-        self._reload_session_combo(select_name=DEFAULT_SESSION_NAME)
+        self._current_session_name = self._session_store.load_active_session_name()
+        self._reload_session_combo(select_name=self._current_session_name)
         self._load_current_session()
         if not self._geometry_restore_done:
             self._center_on_primary_screen()
@@ -372,6 +373,7 @@ class MainWindow(QMainWindow):
         if self._loading_session or not name:
             return
         self._current_session_name = name
+        self._session_store.save_sessions(self._session_store.load_sessions(), active_session=name)
         self._load_current_session()
 
     def _load_current_session(self) -> None:
@@ -452,7 +454,8 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Default session cannot be deleted")
             return
         self._session_store.delete_session(name)
-        self._reload_session_combo(select_name=DEFAULT_SESSION_NAME)
+        self._current_session_name = self._session_store.load_active_session_name()
+        self._reload_session_combo(select_name=self._current_session_name)
         self._load_current_session()
         self.statusBar().showMessage("Session deleted")
         self._append_log(f"Session deleted: {name}")

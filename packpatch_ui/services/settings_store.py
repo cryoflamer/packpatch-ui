@@ -72,43 +72,60 @@ class SessionStore:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or default_sessions_path()
 
-    def load_sessions(self) -> list[AppSession]:
-        """Return all saved sessions sorted by name."""
+    def _read_payload(self) -> dict[str, Any]:
+        """Return the raw sessions payload, or an empty payload when it cannot be read."""
         if not self.path.is_file():
-            return []
+            return {}
 
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return []
+            return {}
 
-        items = raw.get("sessions", []) if isinstance(raw, dict) else []
+        return raw if isinstance(raw, dict) else {}
+
+    def load_active_session_name(self) -> str:
+        """Return the last active session name saved by the UI."""
+        active_session = self._read_payload().get("active_session")
+        if isinstance(active_session, str) and active_session:
+            return active_session
+        return DEFAULT_SESSION_NAME
+
+    def load_sessions(self) -> list[AppSession]:
+        """Return all saved sessions sorted by name."""
+        items = self._read_payload().get("sessions", [])
         if not isinstance(items, list):
             return []
 
         sessions = [AppSession.from_dict(item) for item in items if isinstance(item, dict)]
         return sorted(sessions, key=lambda session: session.name.lower())
 
-    def save_sessions(self, sessions: list[AppSession]) -> None:
+    def save_sessions(self, sessions: list[AppSession], *, active_session: str | None = None) -> None:
         """Persist *sessions* atomically enough for local UI usage."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "format": "packpatch-ui-sessions-v1",
+            "format": "packpatch-ui-sessions-v2",
+            "active_session": active_session or self.load_active_session_name(),
             "sessions": [session.to_dict() for session in sorted(sessions, key=lambda item: item.name.lower())],
         }
         tmp_path = self.path.with_suffix(self.path.suffix + ".tmp")
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         tmp_path.replace(self.path)
 
-    def upsert_session(self, session: AppSession) -> None:
+    def upsert_session(self, session: AppSession, *, make_active: bool = True) -> None:
         """Insert or replace a session by name."""
         sessions = [item for item in self.load_sessions() if item.name != session.name]
         sessions.append(session)
-        self.save_sessions(sessions)
+        active_session = session.name if make_active else self.load_active_session_name()
+        self.save_sessions(sessions, active_session=active_session)
 
     def delete_session(self, name: str) -> None:
         """Delete a session by name if it exists."""
-        self.save_sessions([session for session in self.load_sessions() if session.name != name])
+        remaining_sessions = [session for session in self.load_sessions() if session.name != name]
+        active_session = self.load_active_session_name()
+        if active_session == name:
+            active_session = DEFAULT_SESSION_NAME
+        self.save_sessions(remaining_sessions, active_session=active_session)
 
     def get_session(self, name: str) -> AppSession | None:
         """Return a saved session by name."""
