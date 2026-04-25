@@ -30,6 +30,14 @@ set -euo pipefail
 #     patch.base.sha256
 #     patch.meta.json
 
+PACKPATCH_TMP_PARENT=""
+
+cleanup_tmp_parent() {
+    if [[ -n "${PACKPATCH_TMP_PARENT:-}" && -d "$PACKPATCH_TMP_PARENT" ]]; then
+        rm -rf -- "$PACKPATCH_TMP_PARENT"
+    fi
+}
+
 usage() {
     cat <<'EOF'
 Usage:
@@ -86,11 +94,7 @@ need_cmd() {
 }
 
 json_escape() {
-    python3 - "$1" <<'PY'
-import json
-import sys
-print(json.dumps(sys.argv[1], ensure_ascii=False))
-PY
+    python3 -c 'import json, sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
 }
 
 sanitize_task_name() {
@@ -322,22 +326,52 @@ write_meta_json() {
         | python3 -c 'import json,sys; print(json.dumps([line.rstrip("\n") for line in sys.stdin if line.strip()], ensure_ascii=False, indent=2))'
     )"
 
-    cat > "$pack_dir/patch.meta.json" <<EOF
-{
-  "pack_format": "chatgpt-disposable-repo-v2",
-  "mode": $(json_escape "$mode"),
-  "task": $(json_escape "$task_name"),
-  "created_at": $(json_escape "$timestamp"),
-  "history_depth": $(if [[ -n "$history_depth" ]]; then json_escape "$history_depth"; else printf 'null'; fi),
-  "source": {
-    "root_basename": $(json_escape "$(basename "$source_root")"),
-    "branch": $(json_escape "$branch"),
-    "head": $(json_escape "$head_sha")
-  },
-  "file_count": $file_count,
-  "files": $files_json
+    python3 - \
+        "$pack_dir/patch.meta.json" \
+        "$mode" \
+        "$task_name" \
+        "$timestamp" \
+        "$history_depth" \
+        "$(basename "$source_root")" \
+        "$branch" \
+        "$head_sha" \
+        "$file_count" \
+        "$files_json" <<'PYMETA'
+import json
+import sys
+
+(
+    output_path,
+    mode,
+    task_name,
+    timestamp,
+    history_depth,
+    root_basename,
+    branch,
+    head_sha,
+    file_count,
+    files_json,
+) = sys.argv[1:]
+
+meta = {
+    "pack_format": "chatgpt-disposable-repo-v2",
+    "mode": mode,
+    "task": task_name,
+    "created_at": timestamp,
+    "history_depth": history_depth if history_depth else None,
+    "source": {
+        "root_basename": root_basename,
+        "branch": branch,
+        "head": head_sha,
+    },
+    "file_count": int(file_count),
+    "files": json.loads(files_json),
 }
-EOF
+
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(meta, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PYMETA
 }
 
 init_disposable_repo() {
@@ -612,9 +646,8 @@ main() {
     local task
     task="$(sanitize_task_name "$task_raw")"
 
-    local tmp_parent
-    tmp_parent="$(mktemp -d)"
-    trap 'rm -rf "$tmp_parent"' EXIT
+    PACKPATCH_TMP_PARENT="$(mktemp -d)"
+    trap cleanup_tmp_parent EXIT
 
     local out_dir="${CHATGPT_PACK_OUT_DIR:-$root/chatgpt-packs}"
     mkdir -p "$out_dir"
@@ -631,14 +664,14 @@ main() {
                 esac
                 shift
             done
-            pack_full "$root" "$task" "$include_untracked" "$tmp_parent" "$out_dir"
+            pack_full "$root" "$task" "$include_untracked" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         slice)
-            pack_slice "$root" "$task" "$tmp_parent" "$out_dir" "$@"
+            pack_slice "$root" "$task" "$PACKPATCH_TMP_PARENT" "$out_dir" "$@"
             ;;
         changed)
             [[ "$#" -eq 0 ]] || die "changed mode does not accept paths/options"
-            pack_changed "$root" "$task" "$tmp_parent" "$out_dir"
+            pack_changed "$root" "$task" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         history)
             local depth="50"
@@ -658,7 +691,7 @@ main() {
                 esac
                 shift
             done
-            pack_history "$root" "$task" "$depth" "$tmp_parent" "$out_dir"
+            pack_history "$root" "$task" "$depth" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         *)
             usage
