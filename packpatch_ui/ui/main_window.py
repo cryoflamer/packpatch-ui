@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QComboBox,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -27,6 +29,7 @@ from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_p
 from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
 from packpatch_ui.core.patch_runner import apply_latest_patch
+from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.ui.file_tree import FileTreeWidget
 
 
@@ -36,6 +39,15 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._repo_info: GitRepoInfo | None = None
+        self._session_store = SessionStore()
+        self._loading_session = False
+        self._current_session_name = DEFAULT_SESSION_NAME
+
+        self.session_combo = QComboBox(self)
+        self.new_session_button = QPushButton("New", self)
+        self.save_session_button = QPushButton("Save", self)
+        self.save_session_as_button = QPushButton("Save as...", self)
+        self.delete_session_button = QPushButton("Delete", self)
 
         self.repo_path_edit = QLineEdit(self)
         self.repo_path_edit.setPlaceholderText("Select a git repository...")
@@ -76,11 +88,17 @@ class MainWindow(QMainWindow):
         self.log.setPlaceholderText("Command output and status messages will appear here.")
         self.log.setMinimumHeight(220)
 
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setSingleShot(True)
+        self._autosave_timer.setInterval(750)
+
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 780)
         self.setCentralWidget(self._build_central_widget())
         self.setStatusBar(self._build_status_bar())
         self._connect_signals()
+        self._reload_session_combo(select_name=DEFAULT_SESSION_NAME)
+        self._load_current_session()
 
     def _build_central_widget(self) -> QWidget:
         widget = QWidget(self)
@@ -97,6 +115,14 @@ class MainWindow(QMainWindow):
             widget,
         )
         description.setWordWrap(True)
+
+        session_row = QHBoxLayout()
+        session_row.addWidget(QLabel("Session:", widget))
+        session_row.addWidget(self.session_combo, stretch=1)
+        session_row.addWidget(self.new_session_button)
+        session_row.addWidget(self.save_session_button)
+        session_row.addWidget(self.save_session_as_button)
+        session_row.addWidget(self.delete_session_button)
 
         repo_row = QHBoxLayout()
         repo_row.addWidget(self.repo_path_edit, stretch=1)
@@ -150,6 +176,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(title)
         layout.addWidget(description)
+        layout.addLayout(session_row)
         layout.addLayout(repo_row)
         layout.addLayout(status_grid)
         layout.addLayout(pack_controls)
@@ -167,9 +194,20 @@ class MainWindow(QMainWindow):
         return status_bar
 
     def _connect_signals(self) -> None:
+        self.session_combo.currentTextChanged.connect(self._load_session_by_name)
+        self.new_session_button.clicked.connect(self._new_session)
+        self.save_session_button.clicked.connect(self._save_current_session)
+        self.save_session_as_button.clicked.connect(self._save_session_as)
+        self.delete_session_button.clicked.connect(self._delete_current_session)
+        self._autosave_timer.timeout.connect(self._autosave_current_session)
+
         self.browse_button.clicked.connect(self._browse_repository)
         self.refresh_button.clicked.connect(self._refresh_repository_status)
         self.repo_path_edit.returnPressed.connect(self._refresh_repository_status)
+        self.repo_path_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
         self.create_pack_button.clicked.connect(self._create_slice_pack)
@@ -179,21 +217,137 @@ class MainWindow(QMainWindow):
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
         self.copy_pack_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.pack_list, "pack"))
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
-        self.file_tree.itemChanged.connect(lambda *_: self._update_selection_count())
+        self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
+
+    def _reload_session_combo(self, *, select_name: str | None = None) -> None:
+        sessions = self._session_store.load_sessions()
+        names = [session.name for session in sessions]
+        if DEFAULT_SESSION_NAME not in names:
+            names.insert(0, DEFAULT_SESSION_NAME)
+
+        self._loading_session = True
+        try:
+            self.session_combo.clear()
+            self.session_combo.addItems(names)
+            target = select_name or self._current_session_name or DEFAULT_SESSION_NAME
+            index = self.session_combo.findText(target)
+            self.session_combo.setCurrentIndex(index if index >= 0 else 0)
+            self._current_session_name = self.session_combo.currentText() or DEFAULT_SESSION_NAME
+        finally:
+            self._loading_session = False
+
+    def _load_session_by_name(self, name: str) -> None:
+        if self._loading_session or not name:
+            return
+        self._current_session_name = name
+        self._load_current_session()
+
+    def _load_current_session(self) -> None:
+        session = self._session_store.get_session(self._current_session_name)
+        if session is None:
+            session = AppSession(name=self._current_session_name, patch_dir=str(Path.home() / "Downloads"))
+
+        self._loading_session = True
+        try:
+            self.repo_path_edit.setText(session.repo_path)
+            self.patch_dir_edit.setText(session.patch_dir or str(Path.home() / "Downloads"))
+            self.task_name_edit.setText(session.task_name)
+        finally:
+            self._loading_session = False
+
+        if session.repo_path:
+            self._refresh_repository_status(selected_files=session.selected_files)
+        else:
+            self._set_no_repo("Session loaded. Select a git repository.")
+            self._refresh_artifact_lists()
+
+        self._append_log(f"Session loaded: {session.name}")
+
+    def _new_session(self) -> None:
+        name, accepted = QInputDialog.getText(self, "New session", "Session name:")
+        name = name.strip()
+        if not accepted or not name:
+            return
+        if self._session_store.get_session(name) is not None:
+            self._append_log(f"Session already exists: {name}")
+            self.statusBar().showMessage("Session already exists")
+            return
+
+        session = AppSession(name=name, patch_dir=str(Path.home() / "Downloads"))
+        self._session_store.upsert_session(session)
+        self._reload_session_combo(select_name=name)
+        self._load_current_session()
+        self.statusBar().showMessage("Session created")
+
+    def _save_session_as(self) -> None:
+        name, accepted = QInputDialog.getText(
+            self,
+            "Save session as",
+            "Session name:",
+            text=self._current_session_name,
+        )
+        name = name.strip()
+        if not accepted or not name:
+            return
+        self._current_session_name = name
+        self._session_store.upsert_session(self._current_session_snapshot(name))
+        self._reload_session_combo(select_name=name)
+        self.statusBar().showMessage("Session saved")
+        self._append_log(f"Session saved as: {name}")
+
+    def _save_current_session(self) -> None:
+        self._session_store.upsert_session(self._current_session_snapshot(self._current_session_name))
+        self._reload_session_combo(select_name=self._current_session_name)
+        self.statusBar().showMessage("Session saved")
+        self._append_log(f"Session saved: {self._current_session_name}")
+
+    def _delete_current_session(self) -> None:
+        name = self._current_session_name
+        if name == DEFAULT_SESSION_NAME:
+            self._append_log("Default session cannot be deleted.")
+            self.statusBar().showMessage("Default session cannot be deleted")
+            return
+        self._session_store.delete_session(name)
+        self._reload_session_combo(select_name=DEFAULT_SESSION_NAME)
+        self._load_current_session()
+        self.statusBar().showMessage("Session deleted")
+        self._append_log(f"Session deleted: {name}")
+
+    def _current_session_snapshot(self, name: str) -> AppSession:
+        return AppSession(
+            name=name or DEFAULT_SESSION_NAME,
+            repo_path=self.repo_path_edit.text().strip(),
+            patch_dir=self.patch_dir_edit.text().strip(),
+            task_name=self.task_name_edit.text().strip(),
+            selected_files=self.file_tree.selected_paths(),
+        )
+
+    def _schedule_autosave(self) -> None:
+        if self._loading_session:
+            return
+        self._autosave_timer.start()
+
+    def _autosave_current_session(self) -> None:
+        if self._loading_session:
+            return
+        self._session_store.upsert_session(self._current_session_snapshot(self._current_session_name))
+        self.statusBar().showMessage("Session autosaved")
 
     def _browse_repository(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "Select git repository")
         if selected:
             self.repo_path_edit.setText(selected)
             self._refresh_repository_status()
+            self._schedule_autosave()
 
     def _browse_patch_directory(self) -> None:
         selected = QFileDialog.getExistingDirectory(self, "Select patch directory")
         if selected:
             self.patch_dir_edit.setText(selected)
             self._refresh_artifact_lists()
+            self._schedule_autosave()
 
-    def _refresh_repository_status(self) -> None:
+    def _refresh_repository_status(self, selected_files: list[str] | None = None) -> None:
         raw_path = self.repo_path_edit.text().strip()
         if not raw_path:
             self._set_no_repo("Repository path is empty.")
@@ -216,8 +370,11 @@ class MainWindow(QMainWindow):
 
         files = list_repo_files(info.root)
         self.file_tree.set_files(files)
+        if selected_files is not None:
+            self.file_tree.set_selected_paths(selected_files)
         self._update_selection_count()
         self._refresh_artifact_lists()
+        self._schedule_autosave()
 
         self.statusBar().showMessage("Repository status refreshed")
         self._append_log(
@@ -242,11 +399,15 @@ class MainWindow(QMainWindow):
 
     def _check_all_files(self) -> None:
         self.file_tree.check_all()
-        self._update_selection_count()
+        self._selection_changed()
 
     def _clear_file_selection(self) -> None:
         self.file_tree.clear_selection()
+        self._selection_changed()
+
+    def _selection_changed(self) -> None:
         self._update_selection_count()
+        self._schedule_autosave()
 
     def _update_selection_count(self) -> None:
         count = len(self.file_tree.selected_paths())
@@ -279,6 +440,7 @@ class MainWindow(QMainWindow):
         if result.succeeded:
             self.statusBar().showMessage("Slice pack created")
             self._refresh_artifact_lists()
+            self._schedule_autosave()
         else:
             self.statusBar().showMessage(f"Pack creation failed with exit code {result.returncode}")
 
@@ -353,6 +515,7 @@ class MainWindow(QMainWindow):
         if result.succeeded:
             self.statusBar().showMessage("Patch dry-run completed" if dry_run else "Patch applied")
             self._refresh_repository_status()
+            self._schedule_autosave()
         else:
             self.statusBar().showMessage(f"Patch command failed with exit code {result.returncode}")
 

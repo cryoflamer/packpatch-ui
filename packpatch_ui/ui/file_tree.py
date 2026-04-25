@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import PurePosixPath
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
 
@@ -38,6 +38,17 @@ class FileTreeWidget(QTreeWidget):
         for index in range(root.childCount()):
             self._collect_checked_files(root.child(index), selected)
         return selected
+
+    def set_selected_paths(self, paths: Iterable[str]) -> None:
+        """Check only the file leaves listed in *paths*."""
+        selected = {path for path in paths if path}
+        blocker = QSignalBlocker(self)
+        try:
+            root = self.invisibleRootItem()
+            for index in range(root.childCount()):
+                self._set_selected_paths_recursive(root.child(index), selected)
+        finally:
+            del blocker
 
     def clear_selection(self) -> None:
         """Uncheck all tree items."""
@@ -80,3 +91,14 @@ class FileTreeWidget(QTreeWidget):
         item.setCheckState(0, state)
         for index in range(item.childCount()):
             self._set_check_state_recursive(item.child(index), state)
+
+    def _set_selected_paths_recursive(self, item: QTreeWidgetItem, selected: set[str]) -> None:
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        is_leaf = item.childCount() == 0
+        if is_leaf and isinstance(path, str) and path in selected:
+            item.setCheckState(0, Qt.CheckState.Checked)
+        else:
+            item.setCheckState(0, Qt.CheckState.Unchecked)
+
+        for index in range(item.childCount()):
+            self._set_selected_paths_recursive(item.child(index), selected)
