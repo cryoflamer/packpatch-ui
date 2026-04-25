@@ -38,7 +38,7 @@ from packpatch_ui.core.git_repo import (
     read_git_repo_info,
 )
 from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
-from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_patch_preview, undo_last_commit
+from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, latest_patch_path, read_patch_preview, undo_last_commit
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
 from packpatch_ui.ui.file_tree import FileTreeWidget
@@ -793,14 +793,24 @@ class MainWindow(QMainWindow):
 
     def _patch_action_path(self) -> tuple[Path | None, bool]:
         mode = self._current_patch_target_mode()
+        patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
+
         if mode == "latest":
-            return None, True
+            try:
+                return latest_patch_path(patch_dir), True
+            except FileNotFoundError as error:
+                self._append_log(f"Cannot resolve latest patch: {error}")
+                self.statusBar().showMessage("No latest patch found")
+                return None, False
 
         paths = self._selected_patch_paths()
         if len(paths) != 1:
             if paths:
                 names = "\n".join(f"  {path}" for path in paths)
-                self._append_log(f"Cannot run patch action: selected mode requires exactly one patch.\n{names}")
+                self._append_log(
+                    "Cannot run patch action: selected mode requires exactly one patch; "
+                    f"{len(paths)} patches selected.\n{names}"
+                )
                 self.statusBar().showMessage("Select exactly one patch")
             else:
                 self._append_log("Cannot run patch action: selected mode requires one selected patch.")
@@ -926,9 +936,10 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         mode = self._current_patch_target_mode()
-        label = "selected patch" if patch_path is not None else "latest patch"
+        label = "latest patch" if mode == "latest" else "selected patch"
         self._append_log(f"Checking {label}...")
         self._append_log(f"Patch target mode: {mode}")
+        self._append_log(f"Checking patch:\n  {patch_path}")
 
         try:
             result = check_latest_patch(self._repo_info.root, patch_dir, patch_path=patch_path)
@@ -962,10 +973,14 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         mode = self._current_patch_target_mode()
-        label = "selected patch" if patch_path is not None else "latest patch"
+        label = "latest patch" if mode == "latest" else "selected patch"
         action = f"Dry-running {label}" if dry_run else f"Applying {label}"
         self._append_log(f"{action}...")
         self._append_log(f"Patch target mode: {mode}")
+        if dry_run:
+            self._append_log(f"Dry-running patch:\n  {patch_path}")
+        else:
+            self._append_log(f"Applying patch:\n  {patch_path}")
 
         commit_message = self.commit_message_edit.text().strip() if not dry_run else ""
         if commit_message:
