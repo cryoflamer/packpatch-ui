@@ -27,3 +27,5 @@ htmlcov/
 # PackPatch outputs
 chatgpt-packs/
 *.patch
+
+*.iml
