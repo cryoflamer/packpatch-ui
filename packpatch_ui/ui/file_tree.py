@@ -41,7 +41,13 @@ class FileTreeWidget(QTreeWidget):
 
     def set_selected_paths(self, paths: Iterable[str]) -> None:
         """Check only the file leaves listed in *paths*."""
-        selected = {path for path in paths if path}
+        if isinstance(paths, str):
+            selected = {paths} if paths else set()
+        else:
+            try:
+                selected = {path for path in paths if isinstance(path, str) and path}
+            except TypeError:
+                selected = set()
         blocker = QSignalBlocker(self)
         try:
             root = self.invisibleRootItem()

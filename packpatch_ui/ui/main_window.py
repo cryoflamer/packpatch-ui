@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         self._autosave_timer.timeout.connect(self._autosave_current_session)
 
         self.browse_button.clicked.connect(self._browse_repository)
-        self.refresh_button.clicked.connect(self._refresh_repository_status)
+        self.refresh_button.clicked.connect(lambda: self._refresh_repository_status())
         self.repo_path_edit.returnPressed.connect(self._refresh_repository_status)
         self.repo_path_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
             self._refresh_artifact_lists()
             self._schedule_autosave()
 
-    def _refresh_repository_status(self, selected_files: list[str] | None = None) -> None:
+    def _refresh_repository_status(self, selected_files: object = None) -> None:
         raw_path = self.repo_path_edit.text().strip()
         if not raw_path:
             self._set_no_repo("Repository path is empty.")
@@ -370,8 +370,9 @@ class MainWindow(QMainWindow):
 
         files = list_repo_files(info.root)
         self.file_tree.set_files(files)
-        if selected_files is not None:
-            self.file_tree.set_selected_paths(selected_files)
+        normalized_selection = self._normalize_selected_files(selected_files)
+        if normalized_selection is not None:
+            self.file_tree.set_selected_paths(normalized_selection)
         self._update_selection_count()
         self._refresh_artifact_lists()
         self._schedule_autosave()
@@ -384,6 +385,17 @@ class MainWindow(QMainWindow):
             f"  status: {'dirty' if info.is_dirty else 'clean'}\n"
             f"  files: {len(files)}"
         )
+
+    def _normalize_selected_files(self, selected_files: object) -> list[str] | None:
+        if selected_files is None or isinstance(selected_files, bool):
+            return None
+        if isinstance(selected_files, str):
+            return [selected_files] if selected_files else []
+
+        try:
+            return [path for path in selected_files if isinstance(path, str) and path]
+        except TypeError:
+            return None
 
     def _set_no_repo(self, message: str) -> None:
         self._repo_info = None
