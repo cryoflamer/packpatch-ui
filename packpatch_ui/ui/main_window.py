@@ -27,9 +27,9 @@ from PySide6.QtWidgets import (
 
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, list_pack_archives, list_patch_files
-from packpatch_ui.core.git_repo import GitRepoInfo, list_changed_files, list_recent_commits, list_repo_files, read_git_repo_info
-from packpatch_ui.core.pack_runner import create_slice_pack
-from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_latest_patch_preview, read_patch_preview, undo_last_commit
+from packpatch_ui.core.git_repo import GitRepoInfo, list_changed_files, list_repo_files, read_git_repo_info
+from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
+from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, read_patch_preview, undo_last_commit
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
 from packpatch_ui.ui.file_tree import FileTreeWidget
@@ -62,9 +62,13 @@ class MainWindow(QMainWindow):
         self.branch_value = QLabel("-", self)
         self.status_value = QLabel("-", self)
 
+        self.pack_mode_combo = QComboBox(self)
+        for mode, label in PACK_MODE_LABELS.items():
+            self.pack_mode_combo.addItem(label, mode)
+
         self.task_name_edit = QLineEdit(self)
-        self.task_name_edit.setPlaceholderText("Task name for slice pack, e.g. fix-ui")
-        self.create_pack_button = QPushButton("Create slice pack", self)
+        self.task_name_edit.setPlaceholderText("Task name for pack, e.g. fix-ui")
+        self.create_pack_button = QPushButton("Create pack", self)
 
         self.commit_message_edit = QLineEdit(self)
         self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
@@ -79,7 +83,6 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.setText(str(Path.home() / "Downloads"))
         self.browse_patch_dir_button = QPushButton("Browse patches...", self)
         self.check_latest_patch_button = QPushButton("Check latest patch", self)
-        self.preview_patch_button = QPushButton("Preview patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run latest patch", self)
         self.apply_latest_patch_button = QPushButton("Apply latest patch", self)
 
@@ -136,7 +139,7 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 22px; font-weight: 600;")
 
         description = QLabel(
-            "Select a repository, choose files, create slice packs, and apply generated patches.",
+            "Select a repository, choose files, create packs, and apply generated patches.",
             widget,
         )
         description.setWordWrap(True)
@@ -174,6 +177,8 @@ class MainWindow(QMainWindow):
         )
 
         pack_controls = QHBoxLayout()
+        pack_controls.addWidget(QLabel("Pack mode:", widget))
+        pack_controls.addWidget(self.pack_mode_combo)
         pack_controls.addWidget(QLabel("Task:", widget))
         pack_controls.addWidget(self.task_name_edit, stretch=1)
         pack_controls.addWidget(self.create_pack_button)
@@ -187,7 +192,6 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(self.patch_dir_edit, stretch=1)
         patch_controls.addWidget(self.browse_patch_dir_button)
         patch_controls.addWidget(self.check_latest_patch_button)
-        patch_controls.addWidget(self.preview_patch_button)
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
 
@@ -289,6 +293,7 @@ class MainWindow(QMainWindow):
         self.repo_path_edit.returnPressed.connect(self._refresh_repository_status)
         self.repo_path_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.pack_mode_combo.currentIndexChanged.connect(self._pack_mode_changed)
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.file_filter_edit.textChanged.connect(self._file_filter_changed)
@@ -299,10 +304,9 @@ class MainWindow(QMainWindow):
         self.check_changed_button.clicked.connect(self._select_changed_files)
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
-        self.create_pack_button.clicked.connect(self._create_slice_pack)
+        self.create_pack_button.clicked.connect(self._create_pack)
         self.browse_patch_dir_button.clicked.connect(self._browse_patch_directory)
         self.check_latest_patch_button.clicked.connect(self._check_latest_patch)
-        self.preview_patch_button.clicked.connect(self._preview_patch)
         self.dry_run_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=True))
         self.apply_latest_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=False))
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
@@ -314,7 +318,7 @@ class MainWindow(QMainWindow):
         self.packs_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.patches_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.file_tree_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
-        self.patch_preview_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
+        self.patch_preview_section.toggled.connect(self._patch_preview_section_toggled)
         self.log_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.git_commits_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
 
@@ -350,6 +354,7 @@ class MainWindow(QMainWindow):
         try:
             self.repo_path_edit.setText(session.repo_path)
             self.patch_dir_edit.setText(session.patch_dir or str(Path.home() / "Downloads"))
+            self._set_pack_mode(session.pack_mode)
             self.task_name_edit.setText(session.task_name)
             self.commit_message_edit.setText(session.commit_message)
             self.file_filter_edit.setText(session.file_filter)
@@ -429,6 +434,7 @@ class MainWindow(QMainWindow):
             repo_path=self.repo_path_edit.text().strip(),
             patch_dir=self.patch_dir_edit.text().strip(),
             task_name=self.task_name_edit.text().strip(),
+            pack_mode=self._current_pack_mode(),
             commit_message=self.commit_message_edit.text().strip(),
             selected_files=self.file_tree.selected_paths(),
             file_filter=self.file_filter_edit.text().strip(),
@@ -452,6 +458,11 @@ class MainWindow(QMainWindow):
             return
         self._session_store.upsert_session(self._current_session_snapshot(self._current_session_name))
         self.statusBar().showMessage("Session autosaved")
+
+    def _patch_preview_section_toggled(self, expanded: bool) -> None:
+        self._panel_collapsed_state_changed()
+        if expanded:
+            self._preview_selected_patch(silent=True)
 
     def _panel_collapsed_state_changed(self) -> None:
         if self._loading_session:
@@ -590,6 +601,28 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
         self._append_log(message)
 
+    def _current_pack_mode(self) -> str:
+        mode = self.pack_mode_combo.currentData()
+        return str(mode or "slice")
+
+    def _set_pack_mode(self, mode: str) -> None:
+        index = self.pack_mode_combo.findData(mode or "slice")
+        self.pack_mode_combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _pack_mode_changed(self) -> None:
+        if not self.task_name_edit.text().strip():
+            self.task_name_edit.setText(default_task_name_for_mode(self._current_pack_mode()))
+        self._schedule_autosave()
+
+    def _ensure_task_name_for_mode(self, mode: str) -> str:
+        task_name = self.task_name_edit.text().strip()
+        if task_name:
+            return task_name
+
+        task_name = default_task_name_for_mode(mode)
+        self.task_name_edit.setText(task_name)
+        return task_name
+
     def _select_changed_files(self) -> None:
         if self._repo_info is None:
             self._append_log("Cannot select changed files: no git repository selected.")
@@ -629,18 +662,19 @@ class MainWindow(QMainWindow):
         count = len(self.file_tree.selected_paths())
         self.selection_value.setText(f"{count} file{'s' if count != 1 else ''} selected")
 
-    def _create_slice_pack(self) -> None:
+    def _create_pack(self) -> None:
         if self._repo_info is None:
             self._append_log("Cannot create pack: no git repository selected.")
             self.statusBar().showMessage("No git repository selected")
             return
 
         selected_files = self.file_tree.selected_paths()
-        task_name = self.task_name_edit.text().strip()
+        mode = self._current_pack_mode()
+        task_name = self._ensure_task_name_for_mode(mode)
 
-        self._append_log("Creating slice pack...")
+        self._append_log(f"Creating pack with mode: {PACK_MODE_LABELS.get(mode, mode)}...")
         try:
-            result = create_slice_pack(self._repo_info.root, task_name, selected_files)
+            result = create_pack(self._repo_info.root, mode, task_name, selected_files)
         except (FileNotFoundError, ValueError) as error:
             self._append_log(f"Cannot create pack: {error}")
             self.statusBar().showMessage("Pack creation failed")
@@ -654,7 +688,7 @@ class MainWindow(QMainWindow):
             self._append_log(result.stderr.strip())
 
         if result.succeeded:
-            self.statusBar().showMessage("Slice pack created")
+            self.statusBar().showMessage("Pack created")
             self._refresh_artifact_lists()
             self._schedule_autosave()
         else:
@@ -717,26 +751,6 @@ class MainWindow(QMainWindow):
             self.patch_preview_section.set_collapsed(False)
             self._append_log(f"Previewed patch: {patch_path}")
             self.statusBar().showMessage("Patch preview loaded")
-
-    def _preview_patch(self) -> None:
-        patch_path = self._selected_patch_path()
-        if patch_path is not None:
-            self._preview_selected_patch(silent=False)
-            return
-
-        patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
-        try:
-            patch_path, text, truncated = read_latest_patch_preview(patch_dir)
-        except FileNotFoundError as error:
-            self.patch_preview.setPlainText(str(error))
-            self._append_log(f"Cannot preview patch: {error}")
-            self.statusBar().showMessage("Patch preview failed")
-            return
-
-        self._set_patch_preview_text(patch_path, text, truncated)
-        self.patch_preview_section.set_collapsed(False)
-        self._append_log(f"Previewed patch: {patch_path}")
-        self.statusBar().showMessage("Patch preview loaded")
 
     def _set_patch_preview_text(self, patch_path: Path, text: str, truncated: bool) -> None:
         header = f"# {patch_path}\n"

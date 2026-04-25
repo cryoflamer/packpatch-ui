@@ -22,6 +22,7 @@ class AppSession:
     repo_path: str = ""
     patch_dir: str = ""
     task_name: str = ""
+    pack_mode: str = "slice"
     commit_message: str = ""
     selected_files: list[str] = field(default_factory=list)
     file_filter: str = ""
@@ -46,6 +47,7 @@ class AppSession:
             repo_path=str(data.get("repo_path") or ""),
             patch_dir=str(data.get("patch_dir") or ""),
             task_name=str(data.get("task_name") or ""),
+            pack_mode=str(data.get("pack_mode") or "slice"),
             commit_message=str(data.get("commit_message") or ""),
             selected_files=[str(path) for path in selected_files if str(path)],
             file_filter=str(data.get("file_filter") or ""),
