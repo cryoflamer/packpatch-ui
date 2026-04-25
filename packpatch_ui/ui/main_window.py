@@ -91,9 +91,9 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.setPlaceholderText("Directory with .patch/.diff files, e.g. ~/Downloads")
         self.patch_dir_edit.setText(str(Path.home() / "Downloads"))
         self.browse_patch_dir_button = QPushButton("Browse patches...", self)
-        self.check_latest_patch_button = QPushButton("Check latest patch", self)
-        self.dry_run_patch_button = QPushButton("Dry-run latest patch", self)
-        self.apply_latest_patch_button = QPushButton("Apply latest patch", self)
+        self.check_latest_patch_button = QPushButton("Check patch", self)
+        self.dry_run_patch_button = QPushButton("Dry-run patch", self)
+        self.apply_latest_patch_button = QPushButton("Apply patch", self)
 
         self.refresh_artifacts_button = QPushButton("Refresh packs/patches", self)
         self.copy_pack_path_button = QPushButton("Copy pack path", self)
@@ -753,7 +753,19 @@ class MainWindow(QMainWindow):
             widget.setCurrentRow(0)
         return len(artifacts)
 
+    def _selected_patch_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        for item in self.patch_list.selectedItems():
+            path = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(path, str) and path:
+                paths.append(Path(path).expanduser())
+        return paths
+
     def _selected_patch_path(self) -> Path | None:
+        paths = self._selected_patch_paths()
+        if len(paths) == 1:
+            return paths[0]
+
         item = self.patch_list.currentItem()
         if item is None:
             return None
@@ -762,6 +774,17 @@ class MainWindow(QMainWindow):
         if not isinstance(path, str) or not path:
             return None
         return Path(path).expanduser()
+
+    def _patch_action_path(self) -> Path | None:
+        paths = self._selected_patch_paths()
+        if len(paths) > 1:
+            names = "\n".join(f"  {path}" for path in paths)
+            self._append_log(f"Cannot run patch action: multiple patches selected. Select exactly one or clear selection for latest.\n{names}")
+            self.statusBar().showMessage("Multiple patches selected")
+            return None
+        if len(paths) == 1:
+            return paths[0]
+        return None
 
     def _preview_selected_patch(self, *, silent: bool = False) -> None:
         patch_path = self._selected_patch_path()
@@ -877,10 +900,15 @@ class MainWindow(QMainWindow):
             return
 
         patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
-        self._append_log("Checking latest patch...")
+        selected_paths = self._selected_patch_paths()
+        patch_path = self._patch_action_path()
+        if len(selected_paths) > 1:
+            return
+        label = "selected patch" if patch_path is not None else "latest patch"
+        self._append_log(f"Checking {label}...")
 
         try:
-            result = check_latest_patch(self._repo_info.root, patch_dir)
+            result = check_latest_patch(self._repo_info.root, patch_dir, patch_path=patch_path)
         except FileNotFoundError as error:
             self._append_log(f"Cannot check patch: {error}")
             self.statusBar().showMessage("Patch check failed")
@@ -897,7 +925,7 @@ class MainWindow(QMainWindow):
             self._append_log("Patch check OK: clean apply is possible.")
             self.statusBar().showMessage("Patch check OK")
         else:
-            self._append_log("Patch check failed: clean apply is not possible; Apply latest patch may use fallback.")
+            self._append_log("Patch check failed: clean apply is not possible; Apply patch may use fallback.")
             self.statusBar().showMessage(f"Patch check failed with exit code {result.returncode}")
 
     def _apply_latest_patch(self, *, dry_run: bool) -> None:
@@ -907,7 +935,12 @@ class MainWindow(QMainWindow):
             return
 
         patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
-        action = "Dry-running latest patch" if dry_run else "Applying latest patch"
+        selected_paths = self._selected_patch_paths()
+        patch_path = self._patch_action_path()
+        if len(selected_paths) > 1:
+            return
+        label = "selected patch" if patch_path is not None else "latest patch"
+        action = f"Dry-running {label}" if dry_run else f"Applying {label}"
         self._append_log(f"{action}...")
 
         commit_message = self.commit_message_edit.text().strip() if not dry_run else ""
@@ -920,6 +953,7 @@ class MainWindow(QMainWindow):
                 patch_dir,
                 dry_run=dry_run,
                 commit_message=commit_message,
+                patch_path=patch_path,
             )
         except FileNotFoundError as error:
             self._append_log(f"Cannot apply patch: {error}")

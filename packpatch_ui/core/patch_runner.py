@@ -40,16 +40,22 @@ def apply_latest_patch(
     dry_run: bool = False,
     strict: bool = False,
     commit_message: str = "",
+    patch_path: Path | None = None,
 ) -> PatchApplyResult:
-    """Apply the latest patch from *patch_dir* to *repo_root*."""
-    if not patch_dir.is_dir():
+    """Apply a selected patch or fall back to the latest patch from *patch_dir*."""
+    if patch_path is None and not patch_dir.is_dir():
         raise FileNotFoundError(f"Patch directory not found: {patch_dir}")
+    if patch_path is not None and not patch_path.is_file():
+        raise FileNotFoundError(f"Patch file not found: {patch_path}")
 
     script = default_apply_script_path()
     if not script.is_file():
         raise FileNotFoundError(f"Apply script not found: {script}")
 
-    command = ["bash", str(script), "-d", str(patch_dir)]
+    if patch_path is not None:
+        command = ["bash", str(script), "-p", str(patch_path)]
+    else:
+        command = ["bash", str(script), "-d", str(patch_dir)]
     if dry_run:
         command.append("-n")
     elif commit_message.strip():
@@ -63,6 +69,7 @@ def apply_latest_patch(
         returncode=result.returncode,
         stdout=result.stdout,
         stderr=result.stderr,
+        selected_patch=patch_path,
     )
 
 
@@ -91,6 +98,17 @@ def read_patch_preview(patch_path: Path, *, max_bytes: int = MAX_PATCH_PREVIEW_B
     return text, truncated
 
 
+def latest_patch_path(patch_dir: Path) -> Path:
+    """Return the latest patch path from *patch_dir*."""
+    if not patch_dir.is_dir():
+        raise FileNotFoundError(f"Patch directory not found: {patch_dir}")
+
+    patches = list_patch_files(patch_dir)
+    if not patches:
+        raise FileNotFoundError(f"No .patch or .diff files found in: {patch_dir}")
+    return patches[0].path
+
+
 def read_latest_patch_preview(patch_dir: Path, *, max_bytes: int = MAX_PATCH_PREVIEW_BYTES) -> tuple[Path, str, bool]:
     """Return latest patch path, text preview, and whether preview was truncated."""
     patch_path = latest_patch_path(patch_dir)
@@ -98,16 +116,13 @@ def read_latest_patch_preview(patch_dir: Path, *, max_bytes: int = MAX_PATCH_PRE
     return patch_path, text, truncated
 
 
-def check_latest_patch(repo_root: Path, patch_dir: Path) -> PatchApplyResult:
-    """Check whether the latest patch from *patch_dir* applies cleanly to *repo_root*."""
-    if not patch_dir.is_dir():
-        raise FileNotFoundError(f"Patch directory not found: {patch_dir}")
+def check_latest_patch(repo_root: Path, patch_dir: Path, *, patch_path: Path | None = None) -> PatchApplyResult:
+    """Check whether a selected or latest patch applies cleanly to *repo_root*."""
+    if patch_path is None:
+        patch_path = latest_patch_path(patch_dir)
+    elif not patch_path.is_file():
+        raise FileNotFoundError(f"Patch file not found: {patch_path}")
 
-    patches = list_patch_files(patch_dir)
-    if not patches:
-        raise FileNotFoundError(f"No .patch or .diff files found in: {patch_dir}")
-
-    patch_path = patches[0].path
     command = ["git", "apply", "--check", str(patch_path)]
     result = run_process(command, cwd=repo_root, check=False)
     selected_line = f"Selected patch: {patch_path}\n"
