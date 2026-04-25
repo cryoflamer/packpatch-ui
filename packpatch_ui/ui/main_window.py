@@ -22,11 +22,12 @@ from PySide6.QtWidgets import (
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.git_repo import GitRepoInfo, list_repo_files, read_git_repo_info
 from packpatch_ui.core.pack_runner import create_slice_pack
+from packpatch_ui.core.patch_runner import apply_latest_patch
 from packpatch_ui.ui.file_tree import FileTreeWidget
 
 
 class MainWindow(QMainWindow):
-    """Main window with repository status, file selection, and pack creation controls."""
+    """Main window with repository status, file selection, pack creation, and patch apply controls."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -46,6 +47,13 @@ class MainWindow(QMainWindow):
         self.task_name_edit.setPlaceholderText("Task name for slice pack, e.g. fix-ui")
         self.create_pack_button = QPushButton("Create slice pack", self)
 
+        self.patch_dir_edit = QLineEdit(self)
+        self.patch_dir_edit.setPlaceholderText("Directory with .patch/.diff files, e.g. ~/Downloads")
+        self.patch_dir_edit.setText(str(Path.home() / "Downloads"))
+        self.browse_patch_dir_button = QPushButton("Browse patches...", self)
+        self.dry_run_patch_button = QPushButton("Dry-run latest patch", self)
+        self.apply_latest_patch_button = QPushButton("Apply latest patch", self)
+
         self.file_tree = FileTreeWidget()
         self.check_all_button = QPushButton("Check all", self)
         self.clear_selection_button = QPushButton("Clear", self)
@@ -57,7 +65,7 @@ class MainWindow(QMainWindow):
         self.log.setMinimumHeight(220)
 
         self.setWindowTitle(APP_NAME)
-        self.resize(980, 720)
+        self.resize(1120, 780)
         self.setCentralWidget(self._build_central_widget())
         self.setStatusBar(self._build_status_bar())
         self._connect_signals()
@@ -73,7 +81,7 @@ class MainWindow(QMainWindow):
         title.setStyleSheet("font-size: 22px; font-weight: 600;")
 
         description = QLabel(
-            "Select a repository, choose files, and create a slice pack for the PackPatch workflow.",
+            "Select a repository, choose files, create slice packs, and apply generated patches.",
             widget,
         )
         description.setWordWrap(True)
@@ -99,6 +107,13 @@ class MainWindow(QMainWindow):
         pack_controls.addWidget(self.task_name_edit, stretch=1)
         pack_controls.addWidget(self.create_pack_button)
 
+        patch_controls = QHBoxLayout()
+        patch_controls.addWidget(QLabel("Patches:", widget))
+        patch_controls.addWidget(self.patch_dir_edit, stretch=1)
+        patch_controls.addWidget(self.browse_patch_dir_button)
+        patch_controls.addWidget(self.dry_run_patch_button)
+        patch_controls.addWidget(self.apply_latest_patch_button)
+
         tree_controls = QHBoxLayout()
         tree_controls.addWidget(self.check_all_button)
         tree_controls.addWidget(self.clear_selection_button)
@@ -110,6 +125,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(repo_row)
         layout.addLayout(status_grid)
         layout.addLayout(pack_controls)
+        layout.addLayout(patch_controls)
         layout.addLayout(tree_controls)
         layout.addWidget(self.file_tree, stretch=2)
         layout.addWidget(self.log, stretch=1)
@@ -127,6 +143,9 @@ class MainWindow(QMainWindow):
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
         self.create_pack_button.clicked.connect(self._create_slice_pack)
+        self.browse_patch_dir_button.clicked.connect(self._browse_patch_directory)
+        self.dry_run_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=True))
+        self.apply_latest_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=False))
         self.file_tree.itemChanged.connect(lambda *_: self._update_selection_count())
 
     def _browse_repository(self) -> None:
@@ -134,6 +153,11 @@ class MainWindow(QMainWindow):
         if selected:
             self.repo_path_edit.setText(selected)
             self._refresh_repository_status()
+
+    def _browse_patch_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Select patch directory")
+        if selected:
+            self.patch_dir_edit.setText(selected)
 
     def _refresh_repository_status(self) -> None:
         raw_path = self.repo_path_edit.text().strip()
@@ -219,6 +243,36 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Slice pack created")
         else:
             self.statusBar().showMessage(f"Pack creation failed with exit code {result.returncode}")
+
+    def _apply_latest_patch(self, *, dry_run: bool) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot apply patch: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
+            return
+
+        patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
+        action = "Dry-running latest patch" if dry_run else "Applying latest patch"
+        self._append_log(f"{action}...")
+
+        try:
+            result = apply_latest_patch(self._repo_info.root, patch_dir, dry_run=dry_run)
+        except FileNotFoundError as error:
+            self._append_log(f"Cannot apply patch: {error}")
+            self.statusBar().showMessage("Patch apply failed")
+            return
+
+        self._append_log("Command:")
+        self._append_log("  " + " ".join(result.command))
+        if result.stdout.strip():
+            self._append_log(result.stdout.strip())
+        if result.stderr.strip():
+            self._append_log(result.stderr.strip())
+
+        if result.succeeded:
+            self.statusBar().showMessage("Patch dry-run completed" if dry_run else "Patch applied")
+            self._refresh_repository_status()
+        else:
+            self.statusBar().showMessage(f"Patch command failed with exit code {result.returncode}")
 
     def _append_log(self, message: str) -> None:
         self.log.append(message)
