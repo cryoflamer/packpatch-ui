@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import shlex
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
@@ -64,6 +65,11 @@ class MainWindow(QMainWindow):
         self.task_name_edit = QLineEdit(self)
         self.task_name_edit.setPlaceholderText("Task name for slice pack, e.g. fix-ui")
         self.create_pack_button = QPushButton("Create slice pack", self)
+
+        self.commit_message_edit = QLineEdit(self)
+        self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
+        self.copy_commit_message_button = QPushButton("Copy message", self)
+        self.copy_commit_command_button = QPushButton("Copy git commit", self)
 
         self.patch_dir_edit = QLineEdit(self)
         self.patch_dir_edit.setPlaceholderText("Directory with .patch/.diff files, e.g. ~/Downloads")
@@ -150,6 +156,12 @@ class MainWindow(QMainWindow):
         pack_controls.addWidget(self.task_name_edit, stretch=1)
         pack_controls.addWidget(self.create_pack_button)
 
+        commit_controls = QHBoxLayout()
+        commit_controls.addWidget(QLabel("Commit:", widget))
+        commit_controls.addWidget(self.commit_message_edit, stretch=1)
+        commit_controls.addWidget(self.copy_commit_message_button)
+        commit_controls.addWidget(self.copy_commit_command_button)
+
         patch_controls = QHBoxLayout()
         patch_controls.addWidget(QLabel("Patches:", widget))
         patch_controls.addWidget(self.patch_dir_edit, stretch=1)
@@ -185,6 +197,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(repo_row)
         layout.addLayout(status_grid)
         layout.addLayout(pack_controls)
+        layout.addLayout(commit_controls)
         layout.addLayout(patch_controls)
         layout.addLayout(artifact_controls)
         layout.addLayout(artifact_lists, stretch=1)
@@ -212,6 +225,9 @@ class MainWindow(QMainWindow):
         self.repo_path_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.copy_commit_message_button.clicked.connect(self._copy_commit_message)
+        self.copy_commit_command_button.clicked.connect(self._copy_commit_command)
 
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
@@ -257,6 +273,7 @@ class MainWindow(QMainWindow):
             self.repo_path_edit.setText(session.repo_path)
             self.patch_dir_edit.setText(session.patch_dir or str(Path.home() / "Downloads"))
             self.task_name_edit.setText(session.task_name)
+            self.commit_message_edit.setText(session.commit_message)
         finally:
             self._loading_session = False
 
@@ -326,6 +343,7 @@ class MainWindow(QMainWindow):
             repo_path=self.repo_path_edit.text().strip(),
             patch_dir=self.patch_dir_edit.text().strip(),
             task_name=self.task_name_edit.text().strip(),
+            commit_message=self.commit_message_edit.text().strip(),
             selected_files=self.file_tree.selected_paths(),
             window_geometry=self._encoded_window_geometry(),
         )
@@ -591,6 +609,29 @@ class MainWindow(QMainWindow):
             self._schedule_autosave()
         else:
             self.statusBar().showMessage(f"Patch command failed with exit code {result.returncode}")
+
+    def _copy_commit_message(self) -> None:
+        message = self.commit_message_edit.text().strip()
+        if not message:
+            self._append_log("Cannot copy commit message: field is empty.")
+            self.statusBar().showMessage("Commit message is empty")
+            return
+
+        QApplication.clipboard().setText(message)
+        self._append_log(f"Copied commit message: {message}")
+        self.statusBar().showMessage("Commit message copied")
+
+    def _copy_commit_command(self) -> None:
+        message = self.commit_message_edit.text().strip()
+        if not message:
+            self._append_log("Cannot copy git commit command: commit message is empty.")
+            self.statusBar().showMessage("Commit message is empty")
+            return
+
+        command = f"git commit -m {shlex.quote(message)}"
+        QApplication.clipboard().setText(command)
+        self._append_log(f"Copied git commit command: {command}")
+        self.statusBar().showMessage("Git commit command copied")
 
     def _append_log(self, message: str) -> None:
         self.log.append(message)

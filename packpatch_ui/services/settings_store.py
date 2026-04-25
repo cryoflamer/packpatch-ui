@@ -22,6 +22,7 @@ class AppSession:
     repo_path: str = ""
     patch_dir: str = ""
     task_name: str = ""
+    commit_message: str = ""
     selected_files: list[str] = field(default_factory=list)
     window_geometry: str = ""
 
@@ -37,6 +38,7 @@ class AppSession:
             repo_path=str(data.get("repo_path") or ""),
             patch_dir=str(data.get("patch_dir") or ""),
             task_name=str(data.get("task_name") or ""),
+            commit_message=str(data.get("commit_message") or ""),
             selected_files=[str(path) for path in selected_files if str(path)],
             window_geometry=str(data.get("window_geometry") or ""),
         )
