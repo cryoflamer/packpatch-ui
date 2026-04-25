@@ -23,6 +23,17 @@ class PackResult:
         """Return True when the pack command finished successfully."""
         return self.returncode == 0
 
+    @property
+    def archive_path(self) -> Path | None:
+        """Return the created archive path reported by the pack script, if any."""
+        for line in self.stdout.splitlines():
+            candidate = line.strip()
+            if candidate.endswith((".tar.gz", ".tgz")):
+                path = Path(candidate).expanduser()
+                if path.is_file():
+                    return path
+        return None
+
 
 def default_pack_script_path() -> Path:
     """Return the repository-local pack script path."""

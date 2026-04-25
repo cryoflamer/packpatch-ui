@@ -25,6 +25,8 @@ class AppSession:
     pack_mode: str = "slice"
     commit_message: str = ""
     patch_target_mode: str = "latest"
+    auto_export_pack: bool = False
+    export_dir: str = ""
     selected_files: list[str] = field(default_factory=list)
     file_filter: str = ""
     window_geometry: str = ""
@@ -51,6 +53,8 @@ class AppSession:
             pack_mode=str(data.get("pack_mode") or "slice"),
             commit_message=str(data.get("commit_message") or ""),
             patch_target_mode=str(data.get("patch_target_mode") or "latest"),
+            auto_export_pack=bool(data.get("auto_export_pack", False)),
+            export_dir=str(data.get("export_dir") or ""),
             selected_files=[str(path) for path in selected_files if str(path)],
             file_filter=str(data.get("file_filter") or ""),
             window_geometry=str(data.get("window_geometry") or ""),

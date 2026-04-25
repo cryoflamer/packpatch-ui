@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import html
+import shutil
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QFileDialog,
+    QCheckBox,
     QComboBox,
     QGridLayout,
     QHBoxLayout,
@@ -78,6 +80,11 @@ class MainWindow(QMainWindow):
         self.task_name_edit = QLineEdit(self)
         self.task_name_edit.setPlaceholderText("Task name for pack, e.g. fix-ui")
         self.create_pack_button = QPushButton("Create pack", self)
+
+        self.auto_export_pack_check = QCheckBox("Auto export pack", self)
+        self.export_dir_edit = QLineEdit(self)
+        self.export_dir_edit.setPlaceholderText("Export directory for created packs")
+        self.browse_export_dir_button = QPushButton("Browse export...", self)
 
         self.commit_message_edit = QLineEdit(self)
         self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
@@ -200,6 +207,12 @@ class MainWindow(QMainWindow):
         pack_controls.addWidget(self.task_name_edit, stretch=1)
         pack_controls.addWidget(self.create_pack_button)
 
+        export_controls = QHBoxLayout()
+        export_controls.addWidget(self.auto_export_pack_check)
+        export_controls.addWidget(QLabel("Export dir:", widget))
+        export_controls.addWidget(self.export_dir_edit, stretch=1)
+        export_controls.addWidget(self.browse_export_dir_button)
+
         commit_controls = QHBoxLayout()
         commit_controls.addWidget(QLabel("Commit:", widget))
         commit_controls.addWidget(self.commit_message_edit, stretch=1)
@@ -292,6 +305,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(repo_row)
         layout.addWidget(self.repository_status_section)
         layout.addLayout(pack_controls)
+        layout.addLayout(export_controls)
         layout.addLayout(commit_controls)
         layout.addLayout(patch_controls)
         layout.addLayout(artifact_controls)
@@ -325,6 +339,9 @@ class MainWindow(QMainWindow):
         self.repo_path_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
+        self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.browse_export_dir_button.clicked.connect(self._browse_export_directory)
         self.pack_mode_combo.currentIndexChanged.connect(self._pack_mode_changed)
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -395,6 +412,8 @@ class MainWindow(QMainWindow):
             self.task_name_edit.setText(session.task_name)
             self.commit_message_edit.setText(session.commit_message)
             self._set_patch_target_mode(session.patch_target_mode)
+            self.auto_export_pack_check.setChecked(session.auto_export_pack)
+            self.export_dir_edit.setText(session.export_dir)
             self.file_filter_edit.setText(session.file_filter)
             self.repository_status_section.set_collapsed(session.repository_status_collapsed)
             self.packs_section.set_collapsed(session.latest_packs_collapsed)
@@ -476,6 +495,8 @@ class MainWindow(QMainWindow):
             pack_mode=self._current_pack_mode(),
             commit_message=self.commit_message_edit.text().strip(),
             patch_target_mode=self._current_patch_target_mode(),
+            auto_export_pack=self.auto_export_pack_check.isChecked(),
+            export_dir=self.export_dir_edit.text().strip(),
             selected_files=self.file_tree.selected_paths(),
             file_filter=self.file_filter_edit.text().strip(),
             window_geometry=self._encoded_window_geometry(),
@@ -567,6 +588,12 @@ class MainWindow(QMainWindow):
         if selected:
             self.repo_path_edit.setText(selected)
             self._refresh_repository_status()
+            self._schedule_autosave()
+
+    def _browse_export_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Select export directory")
+        if selected:
+            self.export_dir_edit.setText(selected)
             self._schedule_autosave()
 
     def _browse_patch_directory(self) -> None:
@@ -736,11 +763,40 @@ class MainWindow(QMainWindow):
             self._append_log(result.stderr.strip())
 
         if result.succeeded:
+            self._export_created_pack(result.archive_path)
             self.statusBar().showMessage("Pack created")
             self._refresh_artifact_lists()
             self._schedule_autosave()
         else:
             self.statusBar().showMessage(f"Pack creation failed with exit code {result.returncode}")
+
+    def _export_created_pack(self, archive_path: Path | None) -> None:
+        if not self.auto_export_pack_check.isChecked():
+            return
+
+        export_dir_text = self.export_dir_edit.text().strip()
+        if not export_dir_text:
+            self._append_log("Cannot export pack: export directory is empty.")
+            self.statusBar().showMessage("Export directory is empty")
+            return
+
+        if archive_path is None:
+            self._append_log("Cannot export pack: created archive path was not found in command output.")
+            self.statusBar().showMessage("Pack export failed")
+            return
+
+        export_dir = Path(export_dir_text).expanduser()
+        try:
+            export_dir.mkdir(parents=True, exist_ok=True)
+            destination = export_dir / archive_path.name
+            shutil.copy2(archive_path, destination)
+        except OSError as error:
+            self._append_log(f"Cannot export pack: {error}")
+            self.statusBar().showMessage("Pack export failed")
+            return
+
+        self._append_log(f"Exported pack:\n  {destination}")
+        self.statusBar().showMessage("Pack exported")
 
     def _refresh_artifact_lists(self) -> None:
         self.pack_list.clear()
