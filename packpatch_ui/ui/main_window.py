@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import html
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
@@ -1335,10 +1336,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Copied commit hash")
 
     def _append_log(self, message: str) -> None:
-        """Append log output with lightweight severity-based coloring."""
+        """Append timestamped log output with lightweight severity-based coloring."""
         should_follow = self._is_log_scrolled_to_bottom()
+        timestamp = datetime.now().strftime("%H:%M:%S")
         lines = message.splitlines() or [""]
-        html_lines = [self._format_log_line(line) for line in lines]
+        timestamped_lines = [f"[{timestamp}] {line}" for line in lines]
+        html_lines = [self._format_log_line(line) for line in timestamped_lines]
         self.log.append("<br>".join(html_lines))
         if should_follow:
             self._scroll_log_to_bottom()
