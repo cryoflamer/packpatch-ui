@@ -216,6 +216,20 @@ def _apply_with_order(
 
     if primary == "compatch":
         _abort_git_am(repo_root)
+        if format_patch:
+            blocked_result = PatchApplyResult(
+                command=primary_result.command,
+                returncode=primary_result.returncode,
+                stdout=primary_result.stdout,
+                stderr=(
+                    primary_result.stderr
+                    + "Compatсh apply failed; PackPatch fallback was skipped for git format-patch input.\n"
+                ),
+                selected_patch=patch_path,
+                applied_with="Compatсh",
+            )
+            attempts.append("[PackPatch] skipped: input is a git format-patch file")
+            return _with_attempt_log(blocked_result, attempts)
 
     fallback_result = _try_apply_strategy(
         repo_root,
