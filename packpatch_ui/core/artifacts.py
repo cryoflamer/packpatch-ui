@@ -30,34 +30,15 @@ class ArtifactInfo:
         return f"{self.size_bytes} B"
 
 
-def related_patch_sidecars(patch_path: Path) -> list[Path]:
-    """Return sidecar files that should be deleted with a patch file."""
-    base = patch_path.with_suffix("")
-    return [
-        base.with_suffix(".base.sha256"),
-        base.with_suffix(".meta.json"),
-    ]
 
-
-def delete_artifact(path: Path, *, include_patch_sidecars: bool = False) -> list[Path]:
-    """Delete an artifact and return all files that were removed.
-
-    When *include_patch_sidecars* is true, files with the same base name and
-    `.base.sha256` / `.meta.json` suffixes are removed if present.
-    """
-    candidates = [path]
-    if include_patch_sidecars:
-        candidates.extend(related_patch_sidecars(path))
-
-    deleted: list[Path] = []
-    for candidate in candidates:
-        if not candidate.exists():
-            continue
-        if not candidate.is_file():
-            raise ValueError(f"not a file: {candidate}")
-        candidate.unlink()
-        deleted.append(candidate)
-    return deleted
+def delete_artifact(path: Path) -> list[Path]:
+    """Delete an artifact and return the file that was removed."""
+    if not path.exists():
+        return []
+    if not path.is_file():
+        raise ValueError(f"not a file: {path}")
+    path.unlink()
+    return [path]
 
 
 def list_pack_archives(repo_root: Path) -> list[ArtifactInfo]:

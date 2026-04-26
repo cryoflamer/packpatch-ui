@@ -43,7 +43,7 @@ from packpatch_ui.core.git_repo import (
 from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
 from packpatch_ui.core.patch_runner import (
     APPLY_MODE_LABELS,
-    APPLY_MODE_PACKPATCH_THEN_COMPATCH,
+    APPLY_MODE_COMPATCH_THEN_PACKPATCH,
     apply_latest_patch,
     check_latest_patch,
     latest_patch_path,
@@ -103,7 +103,7 @@ class MainWindow(QMainWindow):
         self.auto_deploy_after_commit_check = QCheckBox("Auto deploy after commit", self)
 
         self.commit_message_edit = QLineEdit(self)
-        self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
+        self.commit_message_edit.setPlaceholderText("Apply commit message for PackPatch, e.g. Update UI wording")
         self.undo_last_commit_button = QPushButton("Undo last commit", self)
         self.refresh_commits_button = QPushButton("Refresh commits", self)
         self.copy_commit_hash_button = QPushButton("Copy hash", self)
@@ -124,7 +124,7 @@ class MainWindow(QMainWindow):
         self.dry_run_patch_button = QPushButton("Dry-run patch", self)
         self.apply_latest_patch_button = QPushButton("Apply patch", self)
 
-        self.refresh_artifacts_button = QPushButton("Refresh packs/patches", self)
+        self.refresh_artifacts_button = QPushButton("Refresh packs/patch files", self)
         self.copy_pack_path_button = QPushButton("Copy pack path", self)
         self.copy_patch_path_button = QPushButton("Copy patch path", self)
         self.delete_pack_button = QPushButton("Delete pack", self)
@@ -241,7 +241,7 @@ class MainWindow(QMainWindow):
         deploy_controls.addWidget(self.auto_deploy_after_commit_check)
 
         commit_controls = QHBoxLayout()
-        commit_controls.addWidget(QLabel("Commit:", widget))
+        commit_controls.addWidget(QLabel("Apply commit message:", widget))
         commit_controls.addWidget(self.commit_message_edit, stretch=1)
 
         patch_controls = QHBoxLayout()
@@ -289,7 +289,7 @@ class MainWindow(QMainWindow):
         patch_column.addWidget(self.patch_list)
 
         self.packs_section = CollapsibleSection("Latest packs", pack_column_widget, collapsed=True, parent=widget)
-        self.patches_section = CollapsibleSection("Latest patches", patch_column_widget, collapsed=False, parent=widget)
+        self.patches_section = CollapsibleSection("Latest patch files", patch_column_widget, collapsed=False, parent=widget)
         artifact_lists.addWidget(self.packs_section, stretch=1)
         artifact_lists.addWidget(self.patches_section, stretch=1)
 
@@ -459,7 +459,7 @@ class MainWindow(QMainWindow):
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
         self.delete_pack_button.clicked.connect(lambda: self._delete_selected_artifacts(self.pack_list, "pack"))
         self.delete_patch_button.clicked.connect(
-            lambda: self._delete_selected_artifacts(self.patch_list, "patch", include_patch_sidecars=True)
+            lambda: self._delete_selected_artifacts(self.patch_list, "patch")
         )
         self.patch_list.currentItemChanged.connect(lambda *_: self._preview_selected_patch(silent=True))
         self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
@@ -795,12 +795,12 @@ class MainWindow(QMainWindow):
     def _set_apply_mode(self, mode: str) -> None:
         index = self.apply_mode_combo.findData(mode)
         if index < 0:
-            index = self.apply_mode_combo.findData(APPLY_MODE_PACKPATCH_THEN_COMPATCH)
+            index = self.apply_mode_combo.findData(APPLY_MODE_COMPATCH_THEN_PACKPATCH)
         self.apply_mode_combo.setCurrentIndex(index if index >= 0 else 0)
 
     def _current_apply_mode(self) -> str:
         mode = self.apply_mode_combo.currentData()
-        return str(mode or APPLY_MODE_PACKPATCH_THEN_COMPATCH)
+        return str(mode or APPLY_MODE_COMPATCH_THEN_PACKPATCH)
 
     def _pack_mode_changed(self) -> None:
         if not self.task_name_edit.text().strip():
@@ -1098,8 +1098,6 @@ class MainWindow(QMainWindow):
         self,
         widget: QListWidget,
         label: str,
-        *,
-        include_patch_sidecars: bool = False,
     ) -> None:
         paths = self._selected_artifact_paths(widget)
         if not paths:
@@ -1107,7 +1105,6 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"No {label} selected")
             return
 
-        sidecar_note = " and their sidecar files" if include_patch_sidecars else ""
         preview_items = "\n".join(f"  {path}" for path in paths[:10])
         if len(paths) > 10:
             preview_items += f"\n  ... and {len(paths) - 10} more"
@@ -1116,7 +1113,7 @@ class MainWindow(QMainWindow):
         response = QMessageBox.question(
             self,
             f"Delete selected {plural_label}",
-            f"Delete {len(paths)} selected {plural_label}{sidecar_note}?\n\n{preview_items}",
+            f"Delete {len(paths)} selected {plural_label}?\n\n{preview_items}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1129,7 +1126,7 @@ class MainWindow(QMainWindow):
         failed: list[str] = []
         for path in paths:
             try:
-                deleted.extend(delete_artifact(path, include_patch_sidecars=include_patch_sidecars))
+                deleted.extend(delete_artifact(path))
             except (OSError, ValueError) as error:
                 failed.append(f"{path}: {error}")
 
@@ -1209,7 +1206,7 @@ class MainWindow(QMainWindow):
 
         commit_message = self.commit_message_edit.text().strip() if not dry_run else ""
         if commit_message:
-            self._append_log("Commit message is set: patch will be applied and committed.")
+            self._append_log("Apply commit message is set: PackPatch apply will create a local commit.")
 
         try:
             result = apply_latest_patch(
@@ -1238,7 +1235,7 @@ class MainWindow(QMainWindow):
             elif result.created_commit:
                 if commit_message and result.applied_with == "PackPatch":
                     self.commit_message_edit.clear()
-                    self._append_log("Commit message field cleared after successful commit.")
+                    self._append_log("Apply commit message field cleared after successful PackPatch commit.")
                 self.statusBar().showMessage("Patch applied and committed")
                 self._auto_deploy_after_commit()
             else:

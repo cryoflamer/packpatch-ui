@@ -20,7 +20,7 @@ PackPatch UI turns that into a repeatable loop:
 repo -> pack -> ChatGPT -> patch -> apply -> commit
 ```
 
-The core rule is simple: ChatGPT works from a disposable git repository archive and returns a real `git diff` patch.
+The core rule is simple: ChatGPT works from a disposable git repository archive and returns either a PackPatch `git diff` file or a Compatсh `git format-patch` file.
 
 For the prompt that should be given to ChatGPT, see [docs/packpatch-prompt.md](docs/packpatch-prompt.md).
 
@@ -50,17 +50,17 @@ Packs are created with `tools/pack-for-chatgpt.sh` and stored in `chatgpt-packs/
 
 - list latest pack archives;
 - list patch files from the configured patch directory;
-- check latest patch with `git apply --check`;
-- apply latest patch through `tools/apply-latest-patch.sh`;
-- fallback support for non-clean patches;
+- check latest PackPatch files with `git apply --check`;
+- apply patch files with selectable PackPatch/Compatсh strategy;
+- fallback support between `git am` and `git apply`;
 - patch preview panel;
 - colored log output.
 
 ### Commit workflow
 
-If the `Commit` field is empty, `Apply latest patch` only applies the patch.
+If `Apply commit message` is empty, a PackPatch is only applied to the index and working tree.
 
-If the `Commit` field is not empty, `Apply latest patch` applies the patch and commits the result using that message. After a successful commit, the field is cleared to prevent accidental reuse of the same message.
+If `Apply commit message` is not empty, PackPatch apply creates a local commit using that message. Compatсh patches already carry their own commit message and are applied with `git am`.
 
 The UI also includes:
 
@@ -161,8 +161,8 @@ PackPatch UI is intentionally conservative:
 
 - packs are disposable git repositories;
 - patches are expected to be real `git diff` output;
-- `git apply --check` is available before apply;
-- fallback apply is centralized in `tools/apply-latest-patch.sh`;
+- `git apply --check` is available before PackPatch apply;
+- selectable apply strategies support PackPatch and Compatсh files;
 - undoing the last commit keeps changes in the working tree.
 
 The UI does not make ChatGPT the source of truth. The pack archive and your local git repository remain the source of truth.

@@ -51,7 +51,7 @@ def apply_latest_patch(
     strict: bool = False,
     commit_message: str = "",
     patch_path: Path | None = None,
-    apply_mode: str = APPLY_MODE_PACKPATCH_THEN_COMPATCH,
+    apply_mode: str = APPLY_MODE_COMPATCH_THEN_PACKPATCH,
 ) -> PatchApplyResult:
     """Apply a selected patch or fall back to the latest patch from *patch_dir*."""
     patch_path = _resolve_patch_path(patch_dir, patch_path)
@@ -85,7 +85,7 @@ def normalize_apply_mode(apply_mode: str) -> str:
     """Return a supported apply mode, falling back to the safest default."""
     if apply_mode in APPLY_MODE_LABELS:
         return apply_mode
-    return APPLY_MODE_PACKPATCH_THEN_COMPATCH
+    return APPLY_MODE_COMPATCH_THEN_PACKPATCH
 
 
 def is_format_patch(patch_path: Path) -> bool:
@@ -266,7 +266,7 @@ def _apply_packpatch(repo_root: Path, patch_path: Path, *, commit_message: str) 
             applied_with="PackPatch",
         )
 
-    stdout = check_result.stdout + apply_result.stdout
+    stdout = check_result.stdout + apply_result.stdout + "Applied with PackPatch via git apply.\n"
     stderr = check_result.stderr + apply_result.stderr
     command = apply_command
     created_commit = False
@@ -294,9 +294,10 @@ def _apply_packpatch(repo_root: Path, patch_path: Path, *, commit_message: str) 
 
 
 def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) -> PatchApplyResult:
+    command = ["git", "am", "--3way", str(patch_path)]
     if not format_patch:
         return PatchApplyResult(
-            command=["git", "am", "--3way", str(patch_path)],
+            command=command,
             returncode=1,
             stdout="",
             stderr="Patch does not look like a git format-patch file.\n",
@@ -304,16 +305,48 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
             applied_with="Compatсh",
         )
 
-    command = ["git", "am", "--3way", str(patch_path)]
+    identity_error = _git_identity_error(repo_root)
+    if identity_error:
+        return PatchApplyResult(
+            command=command,
+            returncode=1,
+            stdout="",
+            stderr=identity_error,
+            selected_patch=patch_path,
+            applied_with="Compatсh",
+        )
+
     result = run_process(command, cwd=repo_root, check=False)
+    stdout = result.stdout
+    if result.returncode == 0:
+        stdout += "Applied with Compatсh via git am.\n"
     return PatchApplyResult(
         command=command,
         returncode=result.returncode,
-        stdout=result.stdout,
+        stdout=stdout,
         stderr=result.stderr,
         selected_patch=patch_path,
         created_commit=result.returncode == 0,
         applied_with="Compatсh",
+    )
+
+
+def _git_identity_error(repo_root: Path) -> str:
+    name_result = run_process(["git", "config", "user.name"], cwd=repo_root, check=False)
+    email_result = run_process(["git", "config", "user.email"], cwd=repo_root, check=False)
+    missing: list[str] = []
+    if name_result.returncode != 0 or not name_result.stdout.strip():
+        missing.append("user.name")
+    if email_result.returncode != 0 or not email_result.stdout.strip():
+        missing.append("user.email")
+    if not missing:
+        return ""
+    joined = ", ".join(missing)
+    return (
+        f"Git identity is not configured for Compatсh apply: {joined}.\n"
+        "Set it with:\n"
+        "  git config user.name \"Your Name\"\n"
+        "  git config user.email \"you@example.com\"\n"
     )
 
 

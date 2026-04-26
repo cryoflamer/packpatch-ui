@@ -38,14 +38,14 @@ Rules:
 13. If the task is unclear or the archive structure is ambiguous, say so instead of guessing.
 
 Output:
-- Provide the `.patch` file.
-- Provide `patch.base.sha256`.
-- Provide `patch.meta.json`.
-- Write the commit message in chat, not as a separate file.
+- Provide exactly one `.patch` file.
+- Do not provide sidecar files such as `patch.base.sha256` or `patch.meta.json`.
+- Write the commit message and a short change summary in chat.
 
 Commit message format:
 - One line.
-- Imperative English is acceptable for this project.
+- English.
+- Passive voice.
 
 Important:
 - Do not output a synthetic or approximate patch.
@@ -58,7 +58,7 @@ Important:
 Use this when the full rule is already established in the conversation:
 
 ```text
-Use PackPatch mode. Use only the provided `chatgpt-pack-*` archive as source of truth. Work inside the unpacked disposable git repo. Produce a valid patch only via `git diff`; validate with `git apply --check`; syntax-check changed files when applicable. Return `.patch`, `patch.base.sha256`, `patch.meta.json`, and write the commit message in chat.
+Use PackPatch mode. Use only the provided `chatgpt-pack-*` archive as source of truth. Work inside the unpacked disposable git repo. Produce exactly one valid `.patch` file only via `git diff`; validate with `git apply --check`; syntax-check changed files when applicable. Write the commit message and a short change summary in chat.
 ```
 
 ## Continuation mode
@@ -98,7 +98,7 @@ A correct PackPatch assistant should:
 3. edit files in place;
 4. run `git diff`;
 5. verify the patch;
-6. return the patch and sidecars;
+6. return exactly one patch file;
 7. summarize what changed;
 8. provide the commit message in chat.
 
@@ -111,8 +111,6 @@ Use PackPatch mode. Add a filter field above the repository file tree.
 Expected result:
 
 - a downloadable `.patch` file;
-- base checksum file;
-- metadata file;
 - chat message such as:
 
 ```text
