@@ -41,7 +41,15 @@ from packpatch_ui.core.git_repo import (
     read_git_repo_info,
 )
 from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
-from packpatch_ui.core.patch_runner import apply_latest_patch, check_latest_patch, latest_patch_path, read_patch_preview, undo_last_commit
+from packpatch_ui.core.patch_runner import (
+    APPLY_MODE_LABELS,
+    APPLY_MODE_PACKPATCH_THEN_COMPATCH,
+    apply_latest_patch,
+    check_latest_patch,
+    latest_patch_path,
+    read_patch_preview,
+    undo_last_commit,
+)
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
@@ -109,6 +117,9 @@ class MainWindow(QMainWindow):
         self.patch_target_combo = QComboBox(self)
         self.patch_target_combo.addItem("latest", "latest")
         self.patch_target_combo.addItem("selected", "selected")
+        self.apply_mode_combo = QComboBox(self)
+        for mode, label in APPLY_MODE_LABELS.items():
+            self.apply_mode_combo.addItem(label, mode)
         self.check_latest_patch_button = QPushButton("Check patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run patch", self)
         self.apply_latest_patch_button = QPushButton("Apply patch", self)
@@ -239,6 +250,8 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(self.browse_patch_dir_button)
         patch_controls.addWidget(QLabel("Patch target:", widget))
         patch_controls.addWidget(self.patch_target_combo)
+        patch_controls.addWidget(QLabel("Apply mode:", widget))
+        patch_controls.addWidget(self.apply_mode_combo)
         patch_controls.addWidget(self.check_latest_patch_button)
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
@@ -366,6 +379,7 @@ class MainWindow(QMainWindow):
             self.patch_dir_edit: "patch.dir",
             self.browse_patch_dir_button: "patch.browse_dir",
             self.patch_target_combo: "patch.target",
+            self.apply_mode_combo: "patch.apply_mode",
             self.check_latest_patch_button: "patch.check",
             self.dry_run_patch_button: "patch.dry_run",
             self.apply_latest_patch_button: "patch.apply",
@@ -416,6 +430,7 @@ class MainWindow(QMainWindow):
         self.repo_path_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
+        self.apply_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.browse_export_dir_button.clicked.connect(self._browse_export_directory)
@@ -493,6 +508,7 @@ class MainWindow(QMainWindow):
             self.task_name_edit.setText(session.task_name)
             self.commit_message_edit.setText(session.commit_message)
             self._set_patch_target_mode(session.patch_target_mode)
+            self._set_apply_mode(session.apply_mode)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.export_dir_edit.setText(session.export_dir)
             self.deploy_dir_edit.setText(session.deploy_dir)
@@ -578,6 +594,7 @@ class MainWindow(QMainWindow):
             pack_mode=self._current_pack_mode(),
             commit_message=self.commit_message_edit.text().strip(),
             patch_target_mode=self._current_patch_target_mode(),
+            apply_mode=self._current_apply_mode(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
             deploy_dir=self.deploy_dir_edit.text().strip(),
@@ -774,6 +791,16 @@ class MainWindow(QMainWindow):
     def _set_patch_target_mode(self, mode: str) -> None:
         index = self.patch_target_combo.findData(mode or "latest")
         self.patch_target_combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _set_apply_mode(self, mode: str) -> None:
+        index = self.apply_mode_combo.findData(mode)
+        if index < 0:
+            index = self.apply_mode_combo.findData(APPLY_MODE_PACKPATCH_THEN_COMPATCH)
+        self.apply_mode_combo.setCurrentIndex(index if index >= 0 else 0)
+
+    def _current_apply_mode(self) -> str:
+        mode = self.apply_mode_combo.currentData()
+        return str(mode or APPLY_MODE_PACKPATCH_THEN_COMPATCH)
 
     def _pack_mode_changed(self) -> None:
         if not self.task_name_edit.text().strip():
@@ -1169,10 +1196,12 @@ class MainWindow(QMainWindow):
         if not ok:
             return
         mode = self._current_patch_target_mode()
+        apply_mode = self._current_apply_mode()
         label = "latest patch" if mode == "latest" else "selected patch"
         action = f"Dry-running {label}" if dry_run else f"Applying {label}"
         self._append_log(f"{action}...")
         self._append_log(f"Patch target mode: {mode}")
+        self._append_log(f"Apply mode: {APPLY_MODE_LABELS[apply_mode]}")
         if dry_run:
             self._append_log(f"Dry-running patch:\n  {patch_path}")
         else:
@@ -1189,6 +1218,7 @@ class MainWindow(QMainWindow):
                 dry_run=dry_run,
                 commit_message=commit_message,
                 patch_path=patch_path,
+                apply_mode=apply_mode,
             )
         except FileNotFoundError as error:
             self._append_log(f"Cannot apply patch: {error}")
@@ -1205,9 +1235,10 @@ class MainWindow(QMainWindow):
         if result.succeeded:
             if dry_run:
                 self.statusBar().showMessage("Patch dry-run completed")
-            elif commit_message:
-                self.commit_message_edit.clear()
-                self._append_log("Commit message field cleared after successful commit.")
+            elif result.created_commit:
+                if commit_message and result.applied_with == "PackPatch":
+                    self.commit_message_edit.clear()
+                    self._append_log("Commit message field cleared after successful commit.")
                 self.statusBar().showMessage("Patch applied and committed")
                 self._auto_deploy_after_commit()
             else:
