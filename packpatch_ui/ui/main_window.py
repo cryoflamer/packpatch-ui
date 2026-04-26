@@ -871,7 +871,7 @@ class MainWindow(QMainWindow):
 
         deploy_dir = Path(deploy_dir_text).expanduser()
         self._append_log(
-            "Deploying committed repo tree:\n"
+            "Deploying current HEAD tree:\n"
             f"  source: {self._repo_info.root}\n"
             f"  target: {deploy_dir}"
         )
@@ -890,8 +890,8 @@ class MainWindow(QMainWindow):
             self._append_log(result.stderr.strip())
 
         if result.succeeded:
-            self._append_log(f"Deployed committed repo tree to:\n  {deploy_dir.resolve()}")
-            self.statusBar().showMessage("Committed repo tree deployed")
+            self._append_log(f"Deploy completed: current HEAD tree synced to:\n  {deploy_dir.resolve()}")
+            self.statusBar().showMessage("Current HEAD tree deployed")
             self._schedule_autosave()
             return True
 
@@ -904,7 +904,9 @@ class MainWindow(QMainWindow):
             return
 
         self._append_log("Auto deploy triggered after commit.")
-        if not self._deploy_repository():
+        if self._deploy_repository():
+            self._append_log("Auto deploy completed successfully.")
+        else:
             self._append_log("Auto deploy after commit failed.")
 
     def _create_pack(self) -> None:
@@ -1264,12 +1266,14 @@ class MainWindow(QMainWindow):
                 if commit_message and result.applied_with == "PackPatch":
                     self.commit_message_edit.clear()
                     self._append_log("Apply commit message field cleared after successful PackPatch commit.")
-                self.statusBar().showMessage("Patch applied and committed")
+                self._append_log(f"Apply completed via {result.applied_with}; commit was created.")
+                self.statusBar().showMessage(f"Patch applied via {result.applied_with} and committed")
                 self._auto_deploy_after_commit()
             else:
                 if not dry_run:
+                    self._append_log(f"Apply completed via {result.applied_with}; no commit was created.")
                     self._append_log("Auto deploy skipped: no commit was created.")
-                self.statusBar().showMessage("Patch applied")
+                self.statusBar().showMessage(f"Patch applied via {result.applied_with}")
             self._refresh_repository_status()
             self._schedule_autosave()
         else:

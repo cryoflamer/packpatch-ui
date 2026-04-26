@@ -540,6 +540,10 @@ def _patch_type_label(format_patch: bool) -> str:
 def _with_attempt_log(result: PatchApplyResult, attempts: list[str], *, header: list[str]) -> PatchApplyResult:
     header_log = "Apply context:\n" + "\n".join(f"  {line}" for line in header) + "\n"
     attempt_log = "Apply strategy attempts:\n" + "\n".join(f"  {attempt}" for attempt in attempts) + "\n"
+    fallback_log = ""
+    if len(attempts) > 1:
+        fallback_status = "succeeded" if result.succeeded else "failed"
+        fallback_log = f"Fallback result: {fallback_status} with {result.applied_with}.\n"
     if result.succeeded:
         commit_status = "commit was created" if result.created_commit else "no commit was created"
         final_log = f"Apply result: applied with {result.applied_with}; {commit_status}.\n"
@@ -548,7 +552,7 @@ def _with_attempt_log(result: PatchApplyResult, attempts: list[str], *, header: 
     return PatchApplyResult(
         command=result.command,
         returncode=result.returncode,
-        stdout=header_log + attempt_log + final_log + result.stdout,
+        stdout=header_log + attempt_log + fallback_log + final_log + result.stdout,
         stderr=result.stderr,
         selected_patch=result.selected_patch,
         created_commit=result.created_commit,
