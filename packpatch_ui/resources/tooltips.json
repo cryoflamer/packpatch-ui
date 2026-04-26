@@ -39,5 +39,8 @@
   "files.clear": "Clear all selected files.",
   "files.tree": "Repository file tree. Check files or directories to include them in slice packs.",
   "files.selection_count": "Number of selected files that will be used by slice pack mode.",
-  "log": "Execution log with commands, warnings, errors, and results. Important lines are colored by severity."
+  "log": "Execution log with commands, warnings, errors, and results. Important lines are colored by severity.",
+  "deploy.dir": "Directory where the selected repository is synchronized without .git and cache files.",
+  "deploy.browse_dir": "Choose the deploy directory for synchronized repository files.",
+  "deploy.run": "Synchronize the selected repository into the deploy directory with rsync --delete while excluding .git and cache files."
 }

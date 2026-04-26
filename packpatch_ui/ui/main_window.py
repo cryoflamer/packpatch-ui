@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack_archives, list_patch_files
+from packpatch_ui.core.deploy_runner import deploy_repo
 from packpatch_ui.core.git_repo import (
     GitRepoInfo,
     list_changed_files,
@@ -86,6 +87,11 @@ class MainWindow(QMainWindow):
         self.export_dir_edit = QLineEdit(self)
         self.export_dir_edit.setPlaceholderText("Export directory for created packs")
         self.browse_export_dir_button = QPushButton("Browse export...", self)
+
+        self.deploy_dir_edit = QLineEdit(self)
+        self.deploy_dir_edit.setPlaceholderText("Deploy directory for synced repository files")
+        self.browse_deploy_dir_button = QPushButton("Browse deploy...", self)
+        self.deploy_repo_button = QPushButton("Deploy repo", self)
 
         self.commit_message_edit = QLineEdit(self)
         self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
@@ -215,6 +221,12 @@ class MainWindow(QMainWindow):
         export_controls.addWidget(self.export_dir_edit, stretch=1)
         export_controls.addWidget(self.browse_export_dir_button)
 
+        deploy_controls = QHBoxLayout()
+        deploy_controls.addWidget(QLabel("Deploy dir:", widget))
+        deploy_controls.addWidget(self.deploy_dir_edit, stretch=1)
+        deploy_controls.addWidget(self.browse_deploy_dir_button)
+        deploy_controls.addWidget(self.deploy_repo_button)
+
         commit_controls = QHBoxLayout()
         commit_controls.addWidget(QLabel("Commit:", widget))
         commit_controls.addWidget(self.commit_message_edit, stretch=1)
@@ -308,6 +320,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.repository_status_section)
         layout.addLayout(pack_controls)
         layout.addLayout(export_controls)
+        layout.addLayout(deploy_controls)
         layout.addLayout(commit_controls)
         layout.addLayout(patch_controls)
         layout.addLayout(artifact_controls)
@@ -340,6 +353,9 @@ class MainWindow(QMainWindow):
             self.auto_export_pack_check: "pack.auto_export",
             self.export_dir_edit: "pack.export_dir",
             self.browse_export_dir_button: "pack.browse_export",
+            self.deploy_dir_edit: "deploy.dir",
+            self.browse_deploy_dir_button: "deploy.browse_dir",
+            self.deploy_repo_button: "deploy.run",
             self.packs_section: "pack.list",
             self.pack_list: "pack.list",
             self.copy_pack_path_button: "pack.copy_path",
@@ -400,6 +416,9 @@ class MainWindow(QMainWindow):
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.browse_export_dir_button.clicked.connect(self._browse_export_directory)
+        self.deploy_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
+        self.browse_deploy_dir_button.clicked.connect(self._browse_deploy_directory)
+        self.deploy_repo_button.clicked.connect(self._deploy_repository)
         self.pack_mode_combo.currentIndexChanged.connect(self._pack_mode_changed)
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -472,6 +491,7 @@ class MainWindow(QMainWindow):
             self._set_patch_target_mode(session.patch_target_mode)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.export_dir_edit.setText(session.export_dir)
+            self.deploy_dir_edit.setText(session.deploy_dir)
             self.file_filter_edit.setText(session.file_filter)
             self.repository_status_section.set_collapsed(session.repository_status_collapsed)
             self.packs_section.set_collapsed(session.latest_packs_collapsed)
@@ -555,6 +575,7 @@ class MainWindow(QMainWindow):
             patch_target_mode=self._current_patch_target_mode(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
+            deploy_dir=self.deploy_dir_edit.text().strip(),
             selected_files=self.file_tree.selected_paths(),
             file_filter=self.file_filter_edit.text().strip(),
             window_geometry=self._encoded_window_geometry(),
@@ -652,6 +673,12 @@ class MainWindow(QMainWindow):
         selected = QFileDialog.getExistingDirectory(self, "Select export directory")
         if selected:
             self.export_dir_edit.setText(selected)
+            self._schedule_autosave()
+
+    def _browse_deploy_directory(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, "Select deploy directory")
+        if selected:
+            self.deploy_dir_edit.setText(selected)
             self._schedule_autosave()
 
     def _browse_patch_directory(self) -> None:
@@ -794,6 +821,45 @@ class MainWindow(QMainWindow):
     def _update_selection_count(self) -> None:
         count = len(self.file_tree.selected_paths())
         self.selection_value.setText(f"{count} file{'s' if count != 1 else ''} selected")
+
+    def _deploy_repository(self) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot deploy repo: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
+            return
+
+        deploy_dir_text = self.deploy_dir_edit.text().strip()
+        if not deploy_dir_text:
+            self._append_log("Cannot deploy repo: deploy directory is empty.")
+            self.statusBar().showMessage("Deploy directory is empty")
+            return
+
+        deploy_dir = Path(deploy_dir_text).expanduser()
+        self._append_log(
+            "Deploying repo:\n"
+            f"  source: {self._repo_info.root}\n"
+            f"  target: {deploy_dir}"
+        )
+        try:
+            result = deploy_repo(self._repo_info.root, deploy_dir)
+        except (FileNotFoundError, OSError, ValueError) as error:
+            self._append_log(f"Cannot deploy repo: {error}")
+            self.statusBar().showMessage("Deploy failed")
+            return
+
+        self._append_log("Command:")
+        self._append_log("  " + " ".join(result.command))
+        if result.stdout.strip():
+            self._append_log(result.stdout.strip())
+        if result.stderr.strip():
+            self._append_log(result.stderr.strip())
+
+        if result.succeeded:
+            self._append_log(f"Deployed repo to:\n  {deploy_dir.resolve()}")
+            self.statusBar().showMessage("Repo deployed")
+            self._schedule_autosave()
+        else:
+            self.statusBar().showMessage(f"Deploy failed with exit code {result.returncode}")
 
     def _create_pack(self) -> None:
         if self._repo_info is None:
