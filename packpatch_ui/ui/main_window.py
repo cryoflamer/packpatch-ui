@@ -1127,7 +1127,10 @@ class MainWindow(QMainWindow):
         failed: list[str] = []
         for path in paths:
             try:
-                deleted.extend(delete_artifact(path))
+                removed_files = delete_artifact(path)
+                deleted.extend(removed_files)
+                if label == "pack":
+                    deleted.extend(self._delete_exported_pack_copies(removed_files))
             except (OSError, ValueError) as error:
                 failed.append(f"{path}: {error}")
 
@@ -1145,6 +1148,28 @@ class MainWindow(QMainWindow):
             self.patch_preview.clear()
         self._refresh_artifact_lists()
         self.statusBar().showMessage(f"Deleted {len(deleted)} artifact file(s)")
+
+    def _delete_exported_pack_copies(self, removed_files: list[Path]) -> list[Path]:
+        export_dir_text = self.export_dir_edit.text().strip()
+        if not export_dir_text:
+            return []
+
+        export_dir = Path(export_dir_text).expanduser()
+        if not export_dir.is_dir():
+            return []
+
+        deleted: list[Path] = []
+        for removed_file in removed_files:
+            exported_path = export_dir / removed_file.name
+            if not exported_path.exists():
+                continue
+            if not exported_path.is_file():
+                self._append_log(f"Skipped exported pack cleanup for non-file path:\n  {exported_path}")
+                continue
+            exported_path.unlink()
+            deleted.append(exported_path)
+
+        return deleted
 
     def _check_latest_patch(self) -> None:
         if self._repo_info is None:
