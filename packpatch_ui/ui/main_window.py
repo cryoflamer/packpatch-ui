@@ -842,7 +842,7 @@ class MainWindow(QMainWindow):
 
         deploy_dir = Path(deploy_dir_text).expanduser()
         self._append_log(
-            "Deploying repo:\n"
+            "Deploying committed repo tree:\n"
             f"  source: {self._repo_info.root}\n"
             f"  target: {deploy_dir}"
         )
@@ -861,8 +861,8 @@ class MainWindow(QMainWindow):
             self._append_log(result.stderr.strip())
 
         if result.succeeded:
-            self._append_log(f"Deployed repo to:\n  {deploy_dir.resolve()}")
-            self.statusBar().showMessage("Repo deployed")
+            self._append_log(f"Deployed committed repo tree to:\n  {deploy_dir.resolve()}")
+            self.statusBar().showMessage("Committed repo tree deployed")
             self._schedule_autosave()
             return True
 

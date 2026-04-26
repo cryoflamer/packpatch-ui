@@ -3,21 +3,12 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 from packpatch_ui.services.process_runner import run_process
-
-
-DEPLOY_EXCLUDES = (
-    ".git",
-    ".gitignore",
-    "__pycache__",
-    "*.pyc",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-)
 
 
 @dataclass(frozen=True)
@@ -36,27 +27,73 @@ class DeployResult:
 
 
 def deploy_repo(source: Path, target: Path) -> DeployResult:
-    """Synchronize *source* into *target* while excluding git and cache files."""
+    """Synchronize the committed HEAD tree from *source* into *target*."""
     source = source.expanduser().resolve()
     target = target.expanduser().resolve()
     _validate_deploy_paths(source, target)
+
+    git_path = shutil.which("git")
+    if git_path is None:
+        raise FileNotFoundError("git was not found in PATH")
+
+    tar_path = shutil.which("tar")
+    if tar_path is None:
+        raise FileNotFoundError("tar was not found in PATH")
 
     rsync_path = shutil.which("rsync")
     if rsync_path is None:
         raise FileNotFoundError("rsync was not found in PATH")
 
     target.mkdir(parents=True, exist_ok=True)
-    command = [rsync_path, "-av", "--delete"]
-    for pattern in DEPLOY_EXCLUDES:
-        command.append(f"--exclude={pattern}")
-    command.extend([f"{source}/", f"{target}/"])
 
-    completed = run_process(command, check=False)
+    with tempfile.TemporaryDirectory(prefix="packpatch-deploy-") as staging_text:
+        staging = Path(staging_text)
+        git_command = [git_path, "archive", "HEAD"]
+        tar_command = [tar_path, "-x", "-C", str(staging)]
+        rsync_command = [rsync_path, "-av", "--delete", f"{staging}/", f"{target}/"]
+        display_command = [*git_command, "|", *tar_command, "&&", *rsync_command]
 
+        archive = subprocess.run(
+            git_command,
+            cwd=source,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        archive_stderr = _decode_process_output(archive.stderr)
+        if archive.returncode != 0:
+            return DeployResult(
+                command=display_command,
+                stdout="",
+                stderr=archive_stderr,
+                returncode=archive.returncode,
+            )
+
+        extract = subprocess.run(
+            tar_command,
+            input=archive.stdout,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        extract_stdout = _decode_process_output(extract.stdout)
+        extract_stderr = _decode_process_output(extract.stderr)
+        if extract.returncode != 0:
+            return DeployResult(
+                command=display_command,
+                stdout=extract_stdout,
+                stderr="\n".join(part for part in (archive_stderr, extract_stderr) if part),
+                returncode=extract.returncode,
+            )
+
+        completed = run_process(rsync_command, check=False)
+
+    stdout = "\n".join(part for part in (extract_stdout, completed.stdout) if part)
+    stderr = "\n".join(part for part in (archive_stderr, extract_stderr, completed.stderr) if part)
     return DeployResult(
-        command=list(command),
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        command=display_command,
+        stdout=stdout,
+        stderr=stderr,
         returncode=completed.returncode,
     )
 
@@ -84,3 +121,7 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _decode_process_output(output: bytes) -> str:
+    return output.decode(errors="replace")
