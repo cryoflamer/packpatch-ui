@@ -209,6 +209,11 @@ def _apply_with_order(
         f"Apply mode: {_apply_order_label(primary, fallback)}",
         f"Detected patch type: {_patch_type_label(format_patch)}",
     ]
+    dirty_result = _dirty_working_tree_result(repo_root, patch_path)
+    if dirty_result is not None:
+        attempts.append("[safety] skipped: working tree is not clean")
+        return _with_attempt_log(dirty_result, attempts, header=header)
+
     primary_result = _try_apply_strategy(
         repo_root,
         patch_path,
@@ -261,10 +266,84 @@ def _try_apply_strategy(
     return _apply_packpatch(repo_root, patch_path, commit_message=commit_message)
 
 
+def _dirty_working_tree_result(repo_root: Path, patch_path: Path) -> PatchApplyResult | None:
+    """Return a failed result when the repository has uncommitted changes."""
+    command = ["git", "status", "--porcelain"]
+    result = run_process(command, cwd=repo_root, check=False)
+    if result.returncode != 0:
+        return PatchApplyResult(
+            command=command,
+            returncode=result.returncode,
+            stdout=result.stdout,
+            stderr=result.stderr,
+            selected_patch=patch_path,
+            applied_with="safety check",
+        )
+
+    dirty_status = result.stdout.strip()
+    if not dirty_status:
+        return None
+
+    return PatchApplyResult(
+        command=command,
+        returncode=1,
+        stdout=(
+            "Working tree is not clean; patch apply was aborted.\n"
+            "Commit, stash, or discard local changes before applying a patch.\n"
+            "Dirty paths:\n"
+            f"{dirty_status}\n"
+        ),
+        stderr=result.stderr,
+        selected_patch=patch_path,
+        applied_with="safety check",
+    )
+
+
+def _packpatch_already_applied_result(repo_root: Path, patch_path: Path) -> PatchApplyResult | None:
+    """Return a success result when a diff patch is already present in the tree."""
+    command = ["git", "apply", "--reverse", "--check", str(patch_path)]
+    result = run_process(command, cwd=repo_root, check=False)
+    if result.returncode != 0:
+        return None
+
+    return PatchApplyResult(
+        command=command,
+        returncode=0,
+        stdout="PackPatch already appears to be applied; skipping.\n",
+        stderr=result.stderr,
+        selected_patch=patch_path,
+        created_commit=False,
+        applied_with="PackPatch",
+    )
+
+
+def _looks_already_applied(output: str) -> bool:
+    """Return True for common git-am messages produced by already applied patches."""
+    lowered = output.lower()
+    markers = (
+        "patch is empty",
+        "already applied",
+        "previously applied",
+        "no changes",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _current_commit_hash(repo_root: Path) -> str:
+    """Return the short hash for HEAD, or an empty string on failure."""
+    result = run_process(["git", "rev-parse", "--short", "HEAD"], cwd=repo_root, check=False)
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
 def _apply_packpatch(repo_root: Path, patch_path: Path, *, commit_message: str) -> PatchApplyResult:
     check_command = ["git", "apply", "--check", str(patch_path)]
     check_result = run_process(check_command, cwd=repo_root, check=False)
     if check_result.returncode != 0:
+        already_applied_result = _packpatch_already_applied_result(repo_root, patch_path)
+        if already_applied_result is not None:
+            return already_applied_result
         return PatchApplyResult(
             command=check_command,
             returncode=check_result.returncode,
@@ -346,6 +425,21 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
         override_result = _override_latest_commit_author(repo_root)
         stdout += override_result.stdout
         stderr += override_result.stderr
+        commit_hash = _current_commit_hash(repo_root)
+        if commit_hash:
+            stdout += f"Commit created: {commit_hash}.\n"
+    elif _looks_already_applied(stdout + stderr):
+        _abort_git_am(repo_root)
+        stdout += "Compatсh already appears to be applied; skipping.\n"
+        return PatchApplyResult(
+            command=command,
+            returncode=0,
+            stdout=stdout,
+            stderr=stderr,
+            selected_patch=patch_path,
+            created_commit=False,
+            applied_with="Compatсh",
+        )
     return PatchApplyResult(
         command=command,
         returncode=result.returncode,
