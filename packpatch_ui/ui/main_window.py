@@ -898,9 +898,10 @@ class MainWindow(QMainWindow):
 
     def _auto_deploy_after_commit(self) -> None:
         if not self.auto_deploy_after_commit_check.isChecked():
+            self._append_log("Auto deploy skipped: auto deploy after commit is disabled.")
             return
 
-        self._append_log("Auto deploy after commit is enabled.")
+        self._append_log("Auto deploy triggered after commit.")
         if not self._deploy_repository():
             self._append_log("Auto deploy after commit failed.")
 
@@ -1239,6 +1240,8 @@ class MainWindow(QMainWindow):
                 self.statusBar().showMessage("Patch applied and committed")
                 self._auto_deploy_after_commit()
             else:
+                if not dry_run:
+                    self._append_log("Auto deploy skipped: no commit was created.")
                 self.statusBar().showMessage("Patch applied")
             self._refresh_repository_status()
             self._schedule_autosave()

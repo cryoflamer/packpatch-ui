@@ -177,11 +177,12 @@ def _resolve_patch_path(patch_dir: Path, patch_path: Path | None) -> Path:
 def _dry_run_result(repo_root: Path, patch_path: Path, apply_mode: str, format_patch: bool) -> PatchApplyResult:
     command = ["git", "apply", "--check", str(patch_path)]
     result = run_process(command, cwd=repo_root, check=False)
-    format_label = "yes" if format_patch else "no"
+    patch_type = _patch_type_label(format_patch)
     stdout = (
         f"Selected patch: {patch_path}\n"
         f"Apply mode: {APPLY_MODE_LABELS[apply_mode]}\n"
-        f"Looks like Compatсh / git format-patch: {format_label}\n"
+        f"Detected patch type: {patch_type}\n"
+        "Dry-run command: git apply --check\n"
         + result.stdout
     )
     return PatchApplyResult(
@@ -203,6 +204,11 @@ def _apply_with_order(
     fallback: str,
 ) -> PatchApplyResult:
     attempts: list[str] = []
+    header = [
+        f"Selected patch: {patch_path}",
+        f"Apply mode: {_apply_order_label(primary, fallback)}",
+        f"Detected patch type: {_patch_type_label(format_patch)}",
+    ]
     primary_result = _try_apply_strategy(
         repo_root,
         patch_path,
@@ -212,7 +218,7 @@ def _apply_with_order(
     )
     attempts.append(_format_attempt(primary, primary_result))
     if primary_result.succeeded:
-        return _with_attempt_log(primary_result, attempts)
+        return _with_attempt_log(primary_result, attempts, header=header)
 
     if primary == "compatch":
         _abort_git_am(repo_root)
@@ -229,7 +235,7 @@ def _apply_with_order(
                 applied_with="Compatсh",
             )
             attempts.append("[PackPatch] skipped: input is a git format-patch file")
-            return _with_attempt_log(blocked_result, attempts)
+            return _with_attempt_log(blocked_result, attempts, header=header)
 
     fallback_result = _try_apply_strategy(
         repo_root,
@@ -239,7 +245,7 @@ def _apply_with_order(
         format_patch=format_patch,
     )
     attempts.append(_format_attempt(fallback, fallback_result))
-    return _with_attempt_log(fallback_result, attempts)
+    return _with_attempt_log(fallback_result, attempts, header=header)
 
 
 def _try_apply_strategy(
@@ -280,7 +286,7 @@ def _apply_packpatch(repo_root: Path, patch_path: Path, *, commit_message: str) 
             applied_with="PackPatch",
         )
 
-    stdout = check_result.stdout + apply_result.stdout + "Applied with PackPatch via git apply.\n"
+    stdout = check_result.stdout + apply_result.stdout + "Applied via git apply; no commit was created by apply itself.\n"
     stderr = check_result.stderr + apply_result.stderr
     command = apply_command
     created_commit = False
@@ -292,6 +298,8 @@ def _apply_packpatch(repo_root: Path, patch_path: Path, *, commit_message: str) 
         stdout += commit_result.stdout
         stderr += commit_result.stderr
         created_commit = commit_result.returncode == 0
+        if created_commit:
+            stdout += "PackPatch commit was created from Apply commit message.\n"
         returncode = commit_result.returncode
     else:
         returncode = apply_result.returncode
@@ -333,7 +341,7 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
     result = run_process(command, cwd=repo_root, check=False)
     stdout = result.stdout
     if result.returncode == 0:
-        stdout += "Applied with Compatсh via git am.\n"
+        stdout += "Applied via git am; commit was created.\n"
     return PatchApplyResult(
         command=command,
         returncode=result.returncode,
@@ -380,12 +388,30 @@ def _format_attempt(strategy: str, result: PatchApplyResult) -> str:
     return f"[{label}] {status}: {' '.join(result.command)}"
 
 
-def _with_attempt_log(result: PatchApplyResult, attempts: list[str]) -> PatchApplyResult:
+def _apply_order_label(primary: str, fallback: str) -> str:
+    primary_label = "Compatсh" if primary == "compatch" else "PackPatch"
+    fallback_label = "Compatсh" if fallback == "compatch" else "PackPatch"
+    return f"{primary_label} -> {fallback_label} fallback"
+
+
+def _patch_type_label(format_patch: bool) -> str:
+    if format_patch:
+        return "Compatсh / git format-patch"
+    return "PackPatch / plain diff"
+
+
+def _with_attempt_log(result: PatchApplyResult, attempts: list[str], *, header: list[str]) -> PatchApplyResult:
+    header_log = "Apply context:\n" + "\n".join(f"  {line}" for line in header) + "\n"
     attempt_log = "Apply strategy attempts:\n" + "\n".join(f"  {attempt}" for attempt in attempts) + "\n"
+    if result.succeeded:
+        commit_status = "commit was created" if result.created_commit else "no commit was created"
+        final_log = f"Apply result: applied with {result.applied_with}; {commit_status}.\n"
+    else:
+        final_log = f"Apply result: failed with {result.applied_with}.\n"
     return PatchApplyResult(
         command=result.command,
         returncode=result.returncode,
-        stdout=attempt_log + result.stdout,
+        stdout=header_log + attempt_log + final_log + result.stdout,
         stderr=result.stderr,
         selected_patch=result.selected_patch,
         created_commit=result.created_commit,
