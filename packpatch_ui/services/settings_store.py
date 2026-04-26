@@ -28,6 +28,7 @@ class AppSession:
     auto_export_pack: bool = False
     export_dir: str = ""
     deploy_dir: str = ""
+    auto_deploy_after_commit: bool = False
     selected_files: list[str] = field(default_factory=list)
     file_filter: str = ""
     window_geometry: str = ""
@@ -57,6 +58,7 @@ class AppSession:
             auto_export_pack=bool(data.get("auto_export_pack", False)),
             export_dir=str(data.get("export_dir") or ""),
             deploy_dir=str(data.get("deploy_dir") or ""),
+            auto_deploy_after_commit=bool(data.get("auto_deploy_after_commit", False)),
             selected_files=[str(path) for path in selected_files if str(path)],
             file_filter=str(data.get("file_filter") or ""),
             window_geometry=str(data.get("window_geometry") or ""),

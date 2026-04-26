@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         self.deploy_dir_edit.setPlaceholderText("Deploy directory for synced repository files")
         self.browse_deploy_dir_button = QPushButton("Browse deploy...", self)
         self.deploy_repo_button = QPushButton("Deploy repo", self)
+        self.auto_deploy_after_commit_check = QCheckBox("Auto deploy after commit", self)
 
         self.commit_message_edit = QLineEdit(self)
         self.commit_message_edit.setPlaceholderText("Commit message, e.g. Add session management UI")
@@ -226,6 +227,7 @@ class MainWindow(QMainWindow):
         deploy_controls.addWidget(self.deploy_dir_edit, stretch=1)
         deploy_controls.addWidget(self.browse_deploy_dir_button)
         deploy_controls.addWidget(self.deploy_repo_button)
+        deploy_controls.addWidget(self.auto_deploy_after_commit_check)
 
         commit_controls = QHBoxLayout()
         commit_controls.addWidget(QLabel("Commit:", widget))
@@ -356,6 +358,7 @@ class MainWindow(QMainWindow):
             self.deploy_dir_edit: "deploy.dir",
             self.browse_deploy_dir_button: "deploy.browse_dir",
             self.deploy_repo_button: "deploy.run",
+            self.auto_deploy_after_commit_check: "deploy.auto_after_commit",
             self.packs_section: "pack.list",
             self.pack_list: "pack.list",
             self.copy_pack_path_button: "pack.copy_path",
@@ -419,6 +422,7 @@ class MainWindow(QMainWindow):
         self.deploy_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.browse_deploy_dir_button.clicked.connect(self._browse_deploy_directory)
         self.deploy_repo_button.clicked.connect(self._deploy_repository)
+        self.auto_deploy_after_commit_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.pack_mode_combo.currentIndexChanged.connect(self._pack_mode_changed)
         self.task_name_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.commit_message_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -492,6 +496,7 @@ class MainWindow(QMainWindow):
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.export_dir_edit.setText(session.export_dir)
             self.deploy_dir_edit.setText(session.deploy_dir)
+            self.auto_deploy_after_commit_check.setChecked(session.auto_deploy_after_commit)
             self.file_filter_edit.setText(session.file_filter)
             self.repository_status_section.set_collapsed(session.repository_status_collapsed)
             self.packs_section.set_collapsed(session.latest_packs_collapsed)
@@ -576,6 +581,7 @@ class MainWindow(QMainWindow):
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
             deploy_dir=self.deploy_dir_edit.text().strip(),
+            auto_deploy_after_commit=self.auto_deploy_after_commit_check.isChecked(),
             selected_files=self.file_tree.selected_paths(),
             file_filter=self.file_filter_edit.text().strip(),
             window_geometry=self._encoded_window_geometry(),
@@ -822,17 +828,17 @@ class MainWindow(QMainWindow):
         count = len(self.file_tree.selected_paths())
         self.selection_value.setText(f"{count} file{'s' if count != 1 else ''} selected")
 
-    def _deploy_repository(self) -> None:
+    def _deploy_repository(self) -> bool:
         if self._repo_info is None:
             self._append_log("Cannot deploy repo: no git repository selected.")
             self.statusBar().showMessage("No git repository selected")
-            return
+            return False
 
         deploy_dir_text = self.deploy_dir_edit.text().strip()
         if not deploy_dir_text:
             self._append_log("Cannot deploy repo: deploy directory is empty.")
             self.statusBar().showMessage("Deploy directory is empty")
-            return
+            return False
 
         deploy_dir = Path(deploy_dir_text).expanduser()
         self._append_log(
@@ -845,7 +851,7 @@ class MainWindow(QMainWindow):
         except (FileNotFoundError, OSError, ValueError) as error:
             self._append_log(f"Cannot deploy repo: {error}")
             self.statusBar().showMessage("Deploy failed")
-            return
+            return False
 
         self._append_log("Command:")
         self._append_log("  " + " ".join(result.command))
@@ -858,8 +864,18 @@ class MainWindow(QMainWindow):
             self._append_log(f"Deployed repo to:\n  {deploy_dir.resolve()}")
             self.statusBar().showMessage("Repo deployed")
             self._schedule_autosave()
-        else:
-            self.statusBar().showMessage(f"Deploy failed with exit code {result.returncode}")
+            return True
+
+        self.statusBar().showMessage(f"Deploy failed with exit code {result.returncode}")
+        return False
+
+    def _auto_deploy_after_commit(self) -> None:
+        if not self.auto_deploy_after_commit_check.isChecked():
+            return
+
+        self._append_log("Auto deploy after commit is enabled.")
+        if not self._deploy_repository():
+            self._append_log("Auto deploy after commit failed.")
 
     def _create_pack(self) -> None:
         if self._repo_info is None:
@@ -1193,6 +1209,7 @@ class MainWindow(QMainWindow):
                 self.commit_message_edit.clear()
                 self._append_log("Commit message field cleared after successful commit.")
                 self.statusBar().showMessage("Patch applied and committed")
+                self._auto_deploy_after_commit()
             else:
                 self.statusBar().showMessage("Patch applied")
             self._refresh_repository_status()
