@@ -340,35 +340,78 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
 
     result = run_process(command, cwd=repo_root, check=False)
     stdout = result.stdout
+    stderr = result.stderr
     if result.returncode == 0:
         stdout += "Applied via git am; commit was created.\n"
+        override_result = _override_latest_commit_author(repo_root)
+        stdout += override_result.stdout
+        stderr += override_result.stderr
     return PatchApplyResult(
         command=command,
         returncode=result.returncode,
         stdout=stdout,
-        stderr=result.stderr,
+        stderr=stderr,
         selected_patch=patch_path,
         created_commit=result.returncode == 0,
         applied_with="Compatсh",
     )
 
 
-def _git_identity_error(repo_root: Path) -> str:
+def _git_identity(repo_root: Path) -> tuple[str, str, str]:
     name_result = run_process(["git", "config", "user.name"], cwd=repo_root, check=False)
     email_result = run_process(["git", "config", "user.email"], cwd=repo_root, check=False)
     missing: list[str] = []
-    if name_result.returncode != 0 or not name_result.stdout.strip():
+    name = name_result.stdout.strip()
+    email = email_result.stdout.strip()
+    if name_result.returncode != 0 or not name:
         missing.append("user.name")
-    if email_result.returncode != 0 or not email_result.stdout.strip():
+    if email_result.returncode != 0 or not email:
         missing.append("user.email")
     if not missing:
-        return ""
+        return name, email, ""
     joined = ", ".join(missing)
-    return (
+    error = (
         f"Git identity is not configured for Compatсh apply: {joined}.\n"
         "Set it with:\n"
         "  git config user.name \"Your Name\"\n"
         "  git config user.email \"you@example.com\"\n"
+    )
+    return "", "", error
+
+
+def _git_identity_error(repo_root: Path) -> str:
+    _, _, error = _git_identity(repo_root)
+    return error
+
+
+def _override_latest_commit_author(repo_root: Path) -> PatchApplyResult:
+    name, email, identity_error = _git_identity(repo_root)
+    if identity_error:
+        return PatchApplyResult(
+            command=["git", "config"],
+            returncode=0,
+            stdout="Compatсh author override skipped: git identity is not configured.\n",
+            stderr=identity_error,
+            applied_with="Compatсh",
+            created_commit=True,
+        )
+
+    author = f"{name} <{email}>"
+    command = ["git", "commit", "--amend", "--no-edit", f"--author={author}"]
+    result = run_process(command, cwd=repo_root, check=False)
+    if result.returncode == 0:
+        stdout = result.stdout + f"Compatсh author was overridden to current git user: {author}.\n"
+        stderr = result.stderr
+    else:
+        stdout = result.stdout + "Compatсh author override failed; original author was preserved.\n"
+        stderr = result.stderr
+    return PatchApplyResult(
+        command=command,
+        returncode=0,
+        stdout=stdout,
+        stderr=stderr,
+        applied_with="Compatсh",
+        created_commit=True,
     )
 
 
