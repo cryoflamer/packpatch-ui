@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -1337,20 +1338,15 @@ class MainWindow(QMainWindow):
 
     def _append_log(self, message: str) -> None:
         """Append timestamped log output with lightweight severity-based coloring."""
-        should_follow = self._is_log_scrolled_to_bottom()
         timestamp = datetime.now().strftime("%H:%M:%S")
         lines = message.splitlines() or [""]
         timestamped_lines = [f"[{timestamp}] {line}" for line in lines]
         html_lines = [self._format_log_line(line) for line in timestamped_lines]
         self.log.append("<br>".join(html_lines))
-        if should_follow:
-            self._scroll_log_to_bottom()
-
-    def _is_log_scrolled_to_bottom(self) -> bool:
-        scrollbar = self.log.verticalScrollBar()
-        return scrollbar.value() >= scrollbar.maximum() - 4
+        self._scroll_log_to_bottom()
 
     def _scroll_log_to_bottom(self) -> None:
+        self.log.moveCursor(QTextCursor.MoveOperation.End)
         scrollbar = self.log.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
