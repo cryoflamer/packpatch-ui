@@ -12,6 +12,7 @@
   "pack.task": "Task name used in the generated pack archive name. If empty, PackPatch UI fills a default based on the selected mode.",
   "pack.create": "Create a chatgpt-pack archive from the current repository using the selected pack mode.",
   "pack.auto_export": "Copy each newly created pack to the export directory automatically.",
+  "pack.include_sensitive": "Include tracked keys and certificates that are normally excluded from packs (*.key, *.crt, *.pem, *.p12, *.pfx, *.cer). Untracked sensitive files remain excluded.",
   "pack.export_dir": "Directory where newly created packs are copied when auto export is enabled.",
   "pack.browse_export": "Choose the pack export directory.",
   "pack.list": "Recently created chatgpt-pack archives in this repository.",

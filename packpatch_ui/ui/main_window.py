@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         self.create_pack_button = QPushButton("Create pack", self)
 
         self.auto_export_pack_check = QCheckBox("Auto export pack", self)
+        self.include_sensitive_files_check = QCheckBox("Include keys/certs", self)
         self.export_dir_edit = QLineEdit(self)
         self.export_dir_edit.setPlaceholderText("Export directory for created packs")
         self.browse_export_dir_button = QPushButton("Browse export...", self)
@@ -234,6 +235,7 @@ class MainWindow(QMainWindow):
         export_controls.addWidget(QLabel("Export dir:", widget))
         export_controls.addWidget(self.export_dir_edit, stretch=1)
         export_controls.addWidget(self.browse_export_dir_button)
+        export_controls.addWidget(self.include_sensitive_files_check)
 
         deploy_controls = QHBoxLayout()
         deploy_controls.addWidget(QLabel("Deploy dir:", widget))
@@ -368,6 +370,7 @@ class MainWindow(QMainWindow):
             self.task_name_edit: "pack.task",
             self.create_pack_button: "pack.create",
             self.auto_export_pack_check: "pack.auto_export",
+            self.include_sensitive_files_check: "pack.include_sensitive",
             self.export_dir_edit: "pack.export_dir",
             self.browse_export_dir_button: "pack.browse_export",
             self.deploy_dir_edit: "deploy.dir",
@@ -434,6 +437,7 @@ class MainWindow(QMainWindow):
         self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.apply_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.include_sensitive_files_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.browse_export_dir_button.clicked.connect(self._browse_export_directory)
         self.deploy_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -512,6 +516,7 @@ class MainWindow(QMainWindow):
             self._set_patch_target_mode(session.patch_target_mode)
             self._set_apply_mode(session.apply_mode)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
+            self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
             self.export_dir_edit.setText(session.export_dir)
             self.deploy_dir_edit.setText(session.deploy_dir)
             self.auto_deploy_after_commit_check.setChecked(session.auto_deploy_after_commit)
@@ -598,6 +603,7 @@ class MainWindow(QMainWindow):
             patch_target_mode=self._current_patch_target_mode(),
             apply_mode=self._current_apply_mode(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
+            include_sensitive_files=self.include_sensitive_files_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
             deploy_dir=self.deploy_dir_edit.text().strip(),
             auto_deploy_after_commit=self.auto_deploy_after_commit_check.isChecked(),
@@ -920,8 +926,18 @@ class MainWindow(QMainWindow):
         task_name = self._ensure_task_name_for_mode(mode)
 
         self._append_log(f"Creating pack with mode: {PACK_MODE_LABELS.get(mode, mode)}...")
+        if self.include_sensitive_files_check.isChecked():
+            self._append_log("Pack sensitive files: including tracked keys/certificates.")
+        else:
+            self._append_log("Pack sensitive files: excluded.")
         try:
-            result = create_pack(self._repo_info.root, mode, task_name, selected_files)
+            result = create_pack(
+                self._repo_info.root,
+                mode,
+                task_name,
+                selected_files,
+                include_sensitive=self.include_sensitive_files_check.isChecked(),
+            )
         except (FileNotFoundError, ValueError) as error:
             self._append_log(f"Cannot create pack: {error}")
             self.statusBar().showMessage("Pack creation failed")

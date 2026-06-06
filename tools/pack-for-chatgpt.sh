@@ -41,7 +41,7 @@ cleanup_tmp_parent() {
 usage() {
     cat <<'EOF'
 Usage:
-  pack-for-chatgpt.sh full    <task-name> [--include-untracked]
+  pack-for-chatgpt.sh full    <task-name> [--include-untracked] [--include-sensitive]
   pack-for-chatgpt.sh slice   <task-name> <file-or-dir>...
   pack-for-chatgpt.sh changed <task-name>
   pack-for-chatgpt.sh history <task-name> [--depth N | --full-history]
@@ -50,6 +50,7 @@ Modes:
   full
     Creates a fresh disposable git repo with all tracked files.
     With --include-untracked, also includes untracked non-ignored files.
+    With --include-sensitive, also includes tracked keys/certificates that are excluded by default.
 
   slice
     Creates a fresh disposable git repo with only selected files/directories.
@@ -73,6 +74,7 @@ Environment:
 Examples:
   ./pack-for-chatgpt.sh full overview
   ./pack-for-chatgpt.sh full overview --include-untracked
+  ./pack-for-chatgpt.sh full overview --include-sensitive
   ./pack-for-chatgpt.sh slice fix-ui src/app.py docs/SPEC.md
   ./pack-for-chatgpt.sh slice docs-review docs/
   ./pack-for-chatgpt.sh changed review-edits
@@ -121,6 +123,19 @@ is_safe_relative_path() {
     return 0
 }
 
+is_sensitive_path() {
+    local p="$1"
+
+    case "$p" in
+        .env|.env.*|*/.env|*/.env.*) return 0 ;;
+        id_rsa|id_rsa.pub|id_ed25519|id_ed25519.pub) return 0 ;;
+        */id_rsa|*/id_rsa.pub|*/id_ed25519|*/id_ed25519.pub) return 0 ;;
+        *.pem|*.key|*.p12|*.pfx|*.crt|*.cer) return 0 ;;
+    esac
+
+    return 1
+}
+
 should_exclude_path() {
     local p="$1"
 
@@ -143,16 +158,26 @@ should_exclude_path() {
         target|target/*|*/target|*/target/*) return 0 ;;
         .DS_Store|*/.DS_Store) return 0 ;;
 
-        .env|.env.*|*/.env|*/.env.*) return 0 ;;
-        id_rsa|id_rsa.pub|id_ed25519|id_ed25519.pub) return 0 ;;
-        */id_rsa|*/id_rsa.pub|*/id_ed25519|*/id_ed25519.pub) return 0 ;;
-        *.pem|*.key|*.p12|*.pfx|*.crt|*.cer) return 0 ;;
-
         *.mp4|*.mov|*.avi|*.mkv|*.webm) return 0 ;;
         *.pt|*.pth|*.onnx|*.engine) return 0 ;;
     esac
 
     return 1
+}
+
+should_exclude_file() {
+    local root="$1"
+    local p="$2"
+    local include_sensitive="$3"
+
+    if is_sensitive_path "$p"; then
+        if [[ "$include_sensitive" == "1" ]] && git -C "$root" ls-files --error-unmatch -- "$p" >/dev/null 2>&1; then
+            return 1
+        fi
+        return 0
+    fi
+
+    should_exclude_path "$p"
 }
 
 copy_file_preserve_path() {
@@ -170,12 +195,13 @@ copy_file_preserve_path() {
 copy_paths_from_nul_stream() {
     local root="$1"
     local dst="$2"
+    local include_sensitive="${3:-0}"
     local count=0
 
     while IFS= read -r -d '' rel; do
         [[ -n "$rel" ]] || continue
         is_safe_relative_path "$rel" || die "unsafe path from git: $rel"
-        if should_exclude_path "$rel"; then
+        if should_exclude_file "$root" "$rel" "$include_sensitive"; then
             continue
         fi
         if [[ -f "$root/$rel" ]]; then
@@ -224,6 +250,7 @@ copy_slice_path() {
     local dst="$2"
     local rel="$3"
     local tmp_list="$4"
+    local include_sensitive="${5:-0}"
     local copied=0
     local file
 
@@ -233,14 +260,14 @@ copy_slice_path() {
     [[ -e "$root/$rel" ]] || die "path does not exist: $rel"
 
     if [[ -f "$root/$rel" ]]; then
-        if ! should_exclude_path "$rel"; then
+        if ! should_exclude_file "$root" "$rel" "$include_sensitive"; then
             copy_file_preserve_path "$root" "$dst" "$rel"
             copied=$((copied + 1))
         fi
     elif [[ -d "$root/$rel" ]]; then
         while IFS= read -r -d '' file; do
             [[ -n "$file" ]] || continue
-            if path_is_inside_slice "$file" "$rel" && ! should_exclude_path "$file"; then
+            if path_is_inside_slice "$file" "$rel" && ! should_exclude_file "$root" "$file" "$include_sensitive"; then
                 copy_file_preserve_path "$root" "$dst" "$file"
                 copied=$((copied + 1))
             fi
@@ -478,8 +505,9 @@ pack_full() {
     local root="$1"
     local task="$2"
     local include_untracked="$3"
-    local tmp_parent="$4"
-    local out_dir="$5"
+    local include_sensitive="$4"
+    local tmp_parent="$5"
+    local out_dir="$6"
 
     local pack_dir
     pack_dir="$(create_clean_pack_dir "$tmp_parent")"
@@ -487,11 +515,11 @@ pack_full() {
     local count=0
     local c
 
-    c="$(collect_tracked_files | copy_paths_from_nul_stream "$root" "$pack_dir")"
+    c="$(collect_tracked_files | copy_paths_from_nul_stream "$root" "$pack_dir" "$include_sensitive")"
     count=$((count + c))
 
     if [[ "$include_untracked" == "1" ]]; then
-        c="$(collect_untracked_files | copy_paths_from_nul_stream "$root" "$pack_dir")"
+        c="$(collect_untracked_files | copy_paths_from_nul_stream "$root" "$pack_dir" "0")"
         count=$((count + c))
     fi
 
@@ -511,9 +539,10 @@ pack_full() {
 pack_slice() {
     local root="$1"
     local task="$2"
-    local tmp_parent="$3"
-    local out_dir="$4"
-    shift 4
+    local include_sensitive="$3"
+    local tmp_parent="$4"
+    local out_dir="$5"
+    shift 5
 
     [[ "$#" -gt 0 ]] || die "slice mode requires at least one path"
 
@@ -528,7 +557,7 @@ pack_slice() {
     local p
 
     for p in "$@"; do
-        c="$(copy_slice_path "$root" "$pack_dir" "$p" "$tmp_list")"
+        c="$(copy_slice_path "$root" "$pack_dir" "$p" "$tmp_list" "$include_sensitive")"
         count=$((count + c))
     done
 
@@ -548,14 +577,15 @@ pack_slice() {
 pack_changed() {
     local root="$1"
     local task="$2"
-    local tmp_parent="$3"
-    local out_dir="$4"
+    local include_sensitive="$3"
+    local tmp_parent="$4"
+    local out_dir="$5"
 
     local pack_dir
     pack_dir="$(create_clean_pack_dir "$tmp_parent")"
 
     local count
-    count="$(collect_changed_files | copy_paths_from_nul_stream "$root" "$pack_dir")"
+    count="$(collect_changed_files | copy_paths_from_nul_stream "$root" "$pack_dir" "$include_sensitive")"
 
     [[ "$count" -gt 0 ]] || die "no changed or untracked files to pack"
 
@@ -657,21 +687,39 @@ main() {
     case "$mode" in
         full)
             local include_untracked="0"
+            local include_sensitive="0"
             while [[ "$#" -gt 0 ]]; do
                 case "$1" in
                     --include-untracked) include_untracked="1" ;;
+                    --include-sensitive) include_sensitive="1" ;;
                     *) die "unknown full option: $1" ;;
                 esac
                 shift
             done
-            pack_full "$root" "$task" "$include_untracked" "$PACKPATCH_TMP_PARENT" "$out_dir"
+            pack_full "$root" "$task" "$include_untracked" "$include_sensitive" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         slice)
-            pack_slice "$root" "$task" "$PACKPATCH_TMP_PARENT" "$out_dir" "$@"
+            local include_sensitive="0"
+            local slice_paths=()
+            while [[ "$#" -gt 0 ]]; do
+                case "$1" in
+                    --include-sensitive) include_sensitive="1" ;;
+                    *) slice_paths+=("$1") ;;
+                esac
+                shift
+            done
+            pack_slice "$root" "$task" "$include_sensitive" "$PACKPATCH_TMP_PARENT" "$out_dir" "${slice_paths[@]}"
             ;;
         changed)
-            [[ "$#" -eq 0 ]] || die "changed mode does not accept paths/options"
-            pack_changed "$root" "$task" "$PACKPATCH_TMP_PARENT" "$out_dir"
+            local include_sensitive="0"
+            while [[ "$#" -gt 0 ]]; do
+                case "$1" in
+                    --include-sensitive) include_sensitive="1" ;;
+                    *) die "unknown changed option: $1" ;;
+                esac
+                shift
+            done
+            pack_changed "$root" "$task" "$include_sensitive" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         history)
             local depth="50"
