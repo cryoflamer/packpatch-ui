@@ -52,6 +52,7 @@ def apply_latest_patch(
     commit_message: str = "",
     patch_path: Path | None = None,
     apply_mode: str = APPLY_MODE_COMPATCH_THEN_PACKPATCH,
+    allow_unversioned_files: bool = False,
 ) -> PatchApplyResult:
     """Apply a selected patch or fall back to the latest patch from *patch_dir*."""
     patch_path = _resolve_patch_path(patch_dir, patch_path)
@@ -69,6 +70,7 @@ def apply_latest_patch(
             format_patch=format_patch,
             primary="compatch",
             fallback="packpatch",
+            allow_unversioned_files=allow_unversioned_files,
         )
 
     return _apply_with_order(
@@ -78,6 +80,7 @@ def apply_latest_patch(
         format_patch=format_patch,
         primary="packpatch",
         fallback="compatch",
+        allow_unversioned_files=allow_unversioned_files,
     )
 
 
@@ -202,6 +205,7 @@ def _apply_with_order(
     format_patch: bool,
     primary: str,
     fallback: str,
+    allow_unversioned_files: bool,
 ) -> PatchApplyResult:
     attempts: list[str] = []
     header = [
@@ -209,7 +213,11 @@ def _apply_with_order(
         f"Apply mode: {_apply_order_label(primary, fallback)}",
         f"Detected patch type: {_patch_type_label(format_patch)}",
     ]
-    dirty_result = _dirty_working_tree_result(repo_root, patch_path)
+    dirty_result = _dirty_working_tree_result(
+        repo_root,
+        patch_path,
+        allow_unversioned_files=allow_unversioned_files,
+    )
     if dirty_result is not None:
         attempts.append("[safety] skipped: working tree is not clean")
         return _with_attempt_log(dirty_result, attempts, header=header)
@@ -266,8 +274,13 @@ def _try_apply_strategy(
     return _apply_packpatch(repo_root, patch_path, commit_message=commit_message)
 
 
-def _dirty_working_tree_result(repo_root: Path, patch_path: Path) -> PatchApplyResult | None:
-    """Return a failed result when the repository has uncommitted changes."""
+def _dirty_working_tree_result(
+    repo_root: Path,
+    patch_path: Path,
+    *,
+    allow_unversioned_files: bool,
+) -> PatchApplyResult | None:
+    """Return a failed result when unsafe uncommitted changes are present."""
     command = ["git", "status", "--porcelain"]
     result = run_process(command, cwd=repo_root, check=False)
     if result.returncode != 0:
@@ -280,16 +293,29 @@ def _dirty_working_tree_result(repo_root: Path, patch_path: Path) -> PatchApplyR
             applied_with="safety check",
         )
 
-    dirty_status = result.stdout.strip()
-    if not dirty_status:
+    status_lines = [line for line in result.stdout.splitlines() if line.strip()]
+    if not status_lines:
         return None
 
+    unversioned = [line for line in status_lines if line.startswith("?? ")]
+    tracked_changes = [line for line in status_lines if not line.startswith("?? ")]
+    if allow_unversioned_files and unversioned and not tracked_changes:
+        return None
+
+    guidance = "Commit, stash, or discard local changes before applying a patch.\n"
+    if unversioned and not tracked_changes and not allow_unversioned_files:
+        guidance = (
+            'Only unversioned files were found. Enable "Allow unversioned files during apply" '
+            "for this repository to continue.\n"
+        )
+
+    dirty_status = "\n".join(status_lines)
     return PatchApplyResult(
         command=command,
         returncode=1,
         stdout=(
             "Working tree is not clean; patch apply was aborted.\n"
-            "Commit, stash, or discard local changes before applying a patch.\n"
+            f"{guidance}"
             "Dirty paths:\n"
             f"{dirty_status}\n"
         ),

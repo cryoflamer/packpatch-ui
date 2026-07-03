@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         self.apply_mode_combo = QComboBox(self)
         for mode, label in APPLY_MODE_LABELS.items():
             self.apply_mode_combo.addItem(label, mode)
+        self.allow_unversioned_apply_check = QCheckBox("Allow unversioned files during apply", self)
         self.check_latest_patch_button = QPushButton("Check patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run patch", self)
         self.apply_latest_patch_button = QPushButton("Apply patch", self)
@@ -256,6 +257,7 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(self.patch_target_combo)
         patch_controls.addWidget(QLabel("Apply mode:", widget))
         patch_controls.addWidget(self.apply_mode_combo)
+        patch_controls.addWidget(self.allow_unversioned_apply_check)
         patch_controls.addWidget(self.check_latest_patch_button)
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
@@ -385,6 +387,7 @@ class MainWindow(QMainWindow):
             self.browse_patch_dir_button: "patch.browse_dir",
             self.patch_target_combo: "patch.target",
             self.apply_mode_combo: "patch.apply_mode",
+            self.allow_unversioned_apply_check: "patch.allow_unversioned",
             self.check_latest_patch_button: "patch.check",
             self.dry_run_patch_button: "patch.dry_run",
             self.apply_latest_patch_button: "patch.apply",
@@ -436,6 +439,7 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.apply_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
+        self.allow_unversioned_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.include_sensitive_files_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -515,6 +519,7 @@ class MainWindow(QMainWindow):
             self.commit_message_edit.setText(session.commit_message)
             self._set_patch_target_mode(session.patch_target_mode)
             self._set_apply_mode(session.apply_mode)
+            self.allow_unversioned_apply_check.setChecked(session.allow_unversioned_apply)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
             self.export_dir_edit.setText(session.export_dir)
@@ -602,6 +607,7 @@ class MainWindow(QMainWindow):
             commit_message=self.commit_message_edit.text().strip(),
             patch_target_mode=self._current_patch_target_mode(),
             apply_mode=self._current_apply_mode(),
+            allow_unversioned_apply=self.allow_unversioned_apply_check.isChecked(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
@@ -1245,6 +1251,8 @@ class MainWindow(QMainWindow):
         self._append_log(f"{action}...")
         self._append_log(f"Patch target mode: {mode}")
         self._append_log(f"Apply mode: {APPLY_MODE_LABELS[apply_mode]}")
+        if self.allow_unversioned_apply_check.isChecked():
+            self._append_log("Apply safety: unversioned files are allowed; tracked changes still block apply.")
         if dry_run:
             self._append_log(f"Dry-running patch:\n  {patch_path}")
         else:
@@ -1262,6 +1270,7 @@ class MainWindow(QMainWindow):
                 commit_message=commit_message,
                 patch_path=patch_path,
                 apply_mode=apply_mode,
+                allow_unversioned_files=self.allow_unversioned_apply_check.isChecked(),
             )
         except FileNotFoundError as error:
             self._append_log(f"Cannot apply patch: {error}")
