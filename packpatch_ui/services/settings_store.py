@@ -27,6 +27,7 @@ class AppSession:
     patch_target_mode: str = "latest"
     apply_mode: str = "compatch_then_packpatch"
     allow_unversioned_apply: bool = False
+    stash_changes_after_undo: bool = False
     auto_export_pack: bool = False
     include_sensitive_files: bool = False
     export_dir: str = ""
@@ -60,6 +61,7 @@ class AppSession:
             patch_target_mode=str(data.get("patch_target_mode") or "latest"),
             apply_mode=str(data.get("apply_mode") or "compatch_then_packpatch"),
             allow_unversioned_apply=bool(data.get("allow_unversioned_apply", False)),
+            stash_changes_after_undo=bool(data.get("stash_changes_after_undo", False)),
             auto_export_pack=bool(data.get("auto_export_pack", False)),
             include_sensitive_files=bool(data.get("include_sensitive_files", False)),
             export_dir=str(data.get("export_dir") or ""),

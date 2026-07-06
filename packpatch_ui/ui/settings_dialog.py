@@ -24,6 +24,7 @@ class SettingsDialog(QDialog):
         include_sensitive_files_check: QCheckBox,
         apply_mode_combo: QComboBox,
         allow_unversioned_apply_check: QCheckBox,
+        stash_changes_after_undo_check: QCheckBox,
         auto_deploy_after_commit_check: QCheckBox,
         parent: QWidget | None = None,
     ) -> None:
@@ -41,6 +42,7 @@ class SettingsDialog(QDialog):
         apply_layout = QFormLayout(apply_group)
         apply_layout.addRow("Apply mode:", apply_mode_combo)
         apply_layout.addRow(allow_unversioned_apply_check)
+        apply_layout.addRow(stash_changes_after_undo_check)
 
         deploy_group = QGroupBox("Deploy", self)
         deploy_layout = QVBoxLayout(deploy_group)

@@ -128,6 +128,7 @@ class MainWindow(QMainWindow):
         for mode, label in APPLY_MODE_LABELS.items():
             self.apply_mode_combo.addItem(label, mode)
         self.allow_unversioned_apply_check = QCheckBox("Allow unversioned files during apply", self)
+        self.stash_changes_after_undo_check = QCheckBox("Stash changes after undo", self)
         self.check_latest_patch_button = QPushButton("Check patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run patch", self)
         self.apply_latest_patch_button = QPushButton("Apply patch", self)
@@ -137,6 +138,7 @@ class MainWindow(QMainWindow):
             include_sensitive_files_check=self.include_sensitive_files_check,
             apply_mode_combo=self.apply_mode_combo,
             allow_unversioned_apply_check=self.allow_unversioned_apply_check,
+            stash_changes_after_undo_check=self.stash_changes_after_undo_check,
             auto_deploy_after_commit_check=self.auto_deploy_after_commit_check,
             parent=self,
         )
@@ -400,6 +402,7 @@ class MainWindow(QMainWindow):
             self.patch_target_combo: "patch.target",
             self.apply_mode_combo: "patch.apply_mode",
             self.allow_unversioned_apply_check: "patch.allow_unversioned",
+            self.stash_changes_after_undo_check: "commit.stash_after_undo",
             self.check_latest_patch_button: "patch.check",
             self.dry_run_patch_button: "patch.dry_run",
             self.apply_latest_patch_button: "patch.apply",
@@ -453,6 +456,7 @@ class MainWindow(QMainWindow):
         self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.apply_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.allow_unversioned_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.stash_changes_after_undo_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.include_sensitive_files_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -535,6 +539,7 @@ class MainWindow(QMainWindow):
             self._set_patch_target_mode(session.patch_target_mode)
             self._set_apply_mode(session.apply_mode)
             self.allow_unversioned_apply_check.setChecked(session.allow_unversioned_apply)
+            self.stash_changes_after_undo_check.setChecked(session.stash_changes_after_undo)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
             self.export_dir_edit.setText(session.export_dir)
@@ -623,6 +628,7 @@ class MainWindow(QMainWindow):
             patch_target_mode=self._current_patch_target_mode(),
             apply_mode=self._current_apply_mode(),
             allow_unversioned_apply=self.allow_unversioned_apply_check.isChecked(),
+            stash_changes_after_undo=self.stash_changes_after_undo_check.isChecked(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
@@ -1367,21 +1373,53 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("No git repository selected")
             return
 
+        stash_after_undo = self.stash_changes_after_undo_check.isChecked()
         self._append_log("Undoing last commit with git reset --mixed HEAD~1...")
-        result = undo_last_commit(self._repo_info.root)
+        result = undo_last_commit(self._repo_info.root, stash_changes=stash_after_undo)
         self._append_log("Command:")
-        self._append_log("  " + " ".join(result.command))
-        if result.stdout.strip():
-            self._append_log(result.stdout.strip())
-        if result.stderr.strip():
-            self._append_log(result.stderr.strip())
+        self._append_log("  " + " ".join(result.reset_command))
+        if result.reset_stdout.strip():
+            self._append_log(result.reset_stdout.strip())
+        if result.reset_stderr.strip():
+            self._append_log(result.reset_stderr.strip())
 
-        if result.succeeded:
-            self.statusBar().showMessage("Last commit undone")
-            self._refresh_repository_status()
-            self._schedule_autosave()
+        if not result.reset_succeeded:
+            self.statusBar().showMessage(f"Undo failed with exit code {result.reset_returncode}")
+            return
+
+        self._append_log("Last commit was reset; its changes remain in the working tree.")
+
+        if result.stash_requested:
+            if result.unversioned_files:
+                self._append_log("Unversioned files before stash:")
+                for path in result.unversioned_files:
+                    self._append_log(f"  {path}")
+            else:
+                self._append_log("No unversioned files will be included in the stash.")
+
+            self._append_log("Stashing working tree changes, including unversioned files...")
+            if result.stash_command is not None:
+                self._append_log("Command:")
+                self._append_log("  " + " ".join(result.stash_command))
+            if result.stash_stdout.strip():
+                self._append_log(result.stash_stdout.strip())
+            if result.stash_stderr.strip():
+                self._append_log(result.stash_stderr.strip())
+
+            if result.stash_succeeded:
+                if result.stash_ref:
+                    self._append_log(f"Stash created: {result.stash_ref}")
+                else:
+                    self._append_log("Stash completed; no stash entry was created.")
+                self.statusBar().showMessage("Last commit undone and changes stashed")
+            else:
+                self._append_log("Commit was reset, but stash failed; changes remain in the working tree.")
+                self.statusBar().showMessage("Commit undone, but stash failed")
         else:
-            self.statusBar().showMessage(f"Undo failed with exit code {result.returncode}")
+            self.statusBar().showMessage("Last commit undone")
+
+        self._refresh_repository_status()
+        self._schedule_autosave()
 
     def _refresh_commit_list(self, *, log_result: bool = True) -> None:
         self.commit_list.clear()

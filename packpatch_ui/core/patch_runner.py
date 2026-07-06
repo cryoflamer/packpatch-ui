@@ -38,6 +38,34 @@ class PatchApplyResult:
         return self.returncode == 0
 
 
+
+@dataclass(frozen=True)
+class UndoCommitResult:
+    """Result of undoing the latest commit and optionally stashing its changes."""
+
+    reset_command: list[str]
+    reset_returncode: int
+    reset_stdout: str
+    reset_stderr: str
+    stash_requested: bool = False
+    unversioned_files: tuple[str, ...] = ()
+    stash_command: list[str] | None = None
+    stash_returncode: int | None = None
+    stash_stdout: str = ""
+    stash_stderr: str = ""
+    stash_ref: str = ""
+
+    @property
+    def reset_succeeded(self) -> bool:
+        """Return True when the reset step succeeded."""
+        return self.reset_returncode == 0
+
+    @property
+    def stash_succeeded(self) -> bool:
+        """Return True when stash was not requested or completed successfully."""
+        return not self.stash_requested or self.stash_returncode == 0
+
+
 def default_apply_script_path() -> Path:
     """Return the repository-local apply script path."""
     return Path(__file__).resolve().parents[2] / "tools" / "apply-latest-patch.sh"
@@ -110,15 +138,59 @@ def is_format_patch(patch_path: Path) -> bool:
     return has_from_header and has_patch_subject and has_separator
 
 
-def undo_last_commit(repo_root: Path) -> PatchApplyResult:
-    """Undo the latest local commit while keeping changes in the working tree."""
-    command = ["git", "reset", "--mixed", "HEAD~1"]
-    result = run_process(command, cwd=repo_root, check=False)
-    return PatchApplyResult(
-        command=command,
-        returncode=result.returncode,
-        stdout=result.stdout,
-        stderr=result.stderr,
+def undo_last_commit(repo_root: Path, *, stash_changes: bool = False) -> UndoCommitResult:
+    """Undo the latest local commit and optionally stash all resulting changes."""
+    reset_command = ["git", "reset", "--mixed", "HEAD~1"]
+    reset_result = run_process(reset_command, cwd=repo_root, check=False)
+    if reset_result.returncode != 0 or not stash_changes:
+        return UndoCommitResult(
+            reset_command=reset_command,
+            reset_returncode=reset_result.returncode,
+            reset_stdout=reset_result.stdout,
+            reset_stderr=reset_result.stderr,
+            stash_requested=stash_changes,
+        )
+
+    unversioned_result = run_process(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=repo_root,
+        check=False,
+    )
+    unversioned_files = tuple(
+        line.strip() for line in unversioned_result.stdout.splitlines() if line.strip()
+    )
+
+    stash_command = [
+        "git",
+        "stash",
+        "push",
+        "-u",
+        "-m",
+        "PackPatch UI: changes after undo",
+    ]
+    stash_result = run_process(stash_command, cwd=repo_root, check=False)
+    stash_ref = ""
+    if stash_result.returncode == 0:
+        stash_ref_result = run_process(
+            ["git", "stash", "list", "-1", "--format=%gd"],
+            cwd=repo_root,
+            check=False,
+        )
+        if stash_ref_result.returncode == 0:
+            stash_ref = stash_ref_result.stdout.strip()
+
+    return UndoCommitResult(
+        reset_command=reset_command,
+        reset_returncode=reset_result.returncode,
+        reset_stdout=reset_result.stdout,
+        reset_stderr=reset_result.stderr,
+        stash_requested=True,
+        unversioned_files=unversioned_files,
+        stash_command=stash_command,
+        stash_returncode=stash_result.returncode,
+        stash_stdout=stash_result.stdout,
+        stash_stderr=stash_result.stderr,
+        stash_ref=stash_ref,
     )
 
 
