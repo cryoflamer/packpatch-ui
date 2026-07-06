@@ -30,7 +30,8 @@ def git(repo: Path, *args: str, env: dict[str, str] | None = None) -> str:
 def init_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
-    git(repo, "init", "-b", "main")
+    git(repo, "init")
+    git(repo, "symbolic-ref", "HEAD", "refs/heads/main")
     git(repo, "config", "user.name", "Local User")
     git(repo, "config", "user.email", "local@example.com")
     (repo / "example.txt").write_text("base\n", encoding="utf-8")
