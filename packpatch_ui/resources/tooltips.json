@@ -43,7 +43,7 @@
   "files.clear": "Clear all selected files.",
   "files.tree": "Repository file tree. Check files or directories to include them in slice packs.",
   "files.selection_count": "Number of selected files that will be used by slice pack mode.",
-  "log": "Execution log with commands, warnings, errors, and results. Important lines are colored by severity.",
+  "log": "Execution log. Status shows key workflow outcomes, Details adds workflow decisions, and Debug includes raw commands and process output. Warnings and errors are always visible.",
   "deploy.dir": "Directory where the committed HEAD tree is deployed without untracked files.",
   "deploy.browse_dir": "Choose the deploy directory for the committed repository tree.",
   "deploy.run": "Deploy the committed HEAD tree into the deploy directory with rsync --delete, without copying untracked files.",
@@ -55,5 +55,6 @@
   "repo.watch_state": "Watch the selected git repository at runtime and refresh branch, HEAD, clean/dirty status, repository files, and commit history when external git state changes. This setting is saved per session/repository workflow.",
   "pack.include_unversioned": "Include non-ignored unversioned files in created packs. Disabled by default because these files are usually local or temporary. The legacy full + untracked pack mode still includes them explicitly.",
   "pack.history_depth": "Number of real source git commits to preserve in every created pack. The minimum and default is 1, so packs always keep the real source HEAD instead of a synthetic base. Larger values include more commit history and may expose older code, messages, or authorship data.",
-  "settings.clear_all_sessions_files": "Delete PackPatch pack archives, exported pack copies, and patch files referenced by all saved sessions. Duplicate directories are handled once and session settings are preserved."
+  "settings.clear_all_sessions_files": "Delete PackPatch pack archives, exported pack copies, and patch files referenced by all saved sessions. Duplicate directories are handled once and session settings are preserved.",
+  "log.verbosity": "Filter log verbosity. Status is the concise default; Details shows workflow decisions; Debug shows raw commands and process output. Existing entries are re-rendered immediately."
 }

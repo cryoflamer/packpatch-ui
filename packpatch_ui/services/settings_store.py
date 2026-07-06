@@ -46,6 +46,7 @@ class AppSession:
     repository_status_collapsed: bool = False
     file_tree_collapsed: bool = False
     log_collapsed: bool = False
+    log_verbosity: str = "status"
     git_commits_collapsed: bool = False
 
     @classmethod
@@ -84,6 +85,7 @@ class AppSession:
             repository_status_collapsed=bool(data.get("repository_status_collapsed", False)),
             file_tree_collapsed=bool(data.get("file_tree_collapsed", False)),
             log_collapsed=bool(data.get("log_collapsed", False)),
+            log_verbosity=str(data.get("log_verbosity") or "status"),
             git_commits_collapsed=bool(data.get("git_commits_collapsed", False)),
         )
 

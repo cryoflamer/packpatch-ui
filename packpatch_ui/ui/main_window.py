@@ -5,7 +5,9 @@ from __future__ import annotations
 import base64
 import html
 import shutil
+from dataclasses import dataclass
 from datetime import datetime
+from enum import IntEnum
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
@@ -64,6 +66,32 @@ from packpatch_ui.ui.file_tree import FileTreeWidget
 from packpatch_ui.ui.settings_dialog import SettingsDialog
 
 
+class LogVerbosity(IntEnum):
+    """Maximum detail shown in the execution log."""
+
+    STATUS = 0
+    DETAILS = 1
+    DEBUG = 2
+
+
+class LogSeverity(IntEnum):
+    """Severity that may override verbosity filtering."""
+
+    INFO = 0
+    WARNING = 1
+    ERROR = 2
+
+
+@dataclass(slots=True)
+class LogEntry:
+    """Structured in-memory log entry."""
+
+    timestamp: str
+    message: str
+    verbosity: LogVerbosity
+    severity: LogSeverity
+
+
 class MainWindow(QMainWindow):
     """Main window with repository status, file selection, pack creation, and patch apply controls."""
 
@@ -76,6 +104,7 @@ class MainWindow(QMainWindow):
         self._geometry_restore_done = False
         self._repo_state_snapshot: GitRepoStateSnapshot | None = None
         self._repository_watch_busy = False
+        self._log_entries: list[LogEntry] = []
 
         self.session_combo = QComboBox(self)
         self.new_session_button = QPushButton("New", self)
@@ -190,6 +219,10 @@ class MainWindow(QMainWindow):
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("Command output and status messages will appear here.")
         self.log.setMinimumHeight(260)
+        self.log_verbosity_combo = QComboBox(self)
+        self.log_verbosity_combo.addItem("Status", "status")
+        self.log_verbosity_combo.addItem("Details", "details")
+        self.log_verbosity_combo.addItem("Debug", "debug")
 
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
@@ -359,7 +392,18 @@ class MainWindow(QMainWindow):
         commit_history_layout.addLayout(commit_history_controls)
         commit_history_layout.addWidget(self.commit_list, stretch=1)
 
-        self.log_section = CollapsibleSection("Log", self.log, collapsed=False, parent=widget)
+        log_widget = QWidget(widget)
+        log_layout = QVBoxLayout(log_widget)
+        log_layout.setContentsMargins(0, 0, 0, 0)
+        log_layout.setSpacing(4)
+        log_controls = QHBoxLayout()
+        log_controls.addStretch(1)
+        log_controls.addWidget(QLabel("View:", log_widget))
+        log_controls.addWidget(self.log_verbosity_combo)
+        log_layout.addLayout(log_controls)
+        log_layout.addWidget(self.log, stretch=1)
+
+        self.log_section = CollapsibleSection("Log", log_widget, collapsed=False, parent=widget)
         self.git_commits_section = CollapsibleSection("Git commits", commit_history_widget, collapsed=False, parent=widget)
 
         layout.addWidget(title)
@@ -448,6 +492,7 @@ class MainWindow(QMainWindow):
             self.selection_value: "files.selection_count",
             self.log_section: "log",
             self.log: "log",
+            self.log_verbosity_combo: "log.verbosity",
         }
         for widget, key in tooltip_map.items():
             text = tooltip(key)
@@ -469,6 +514,7 @@ class MainWindow(QMainWindow):
         self.settings_dialog.clear_all_sessions_files_requested.connect(self._clear_all_sessions_files)
         self._autosave_timer.timeout.connect(self._autosave_current_session)
         self._repository_watch_timer.timeout.connect(self._poll_repository_state)
+        self.log_verbosity_combo.currentIndexChanged.connect(self._log_verbosity_changed)
 
         self.browse_button.clicked.connect(self._browse_repository)
         self.refresh_button.clicked.connect(lambda: self._refresh_repository_status())
@@ -581,6 +627,7 @@ class MainWindow(QMainWindow):
             self.file_tree_section.set_collapsed(session.file_tree_collapsed)
             self.patch_preview_section.set_collapsed(session.patch_preview_collapsed)
             self.log_section.set_collapsed(session.log_collapsed)
+            self._set_log_verbosity(session.log_verbosity)
             self.git_commits_section.set_collapsed(session.git_commits_collapsed)
         finally:
             self._loading_session = False
@@ -676,6 +723,7 @@ class MainWindow(QMainWindow):
             repository_status_collapsed=True,
             file_tree_collapsed=self.file_tree_section.is_collapsed(),
             log_collapsed=self.log_section.is_collapsed(),
+            log_verbosity=self._current_log_verbosity_name(),
             git_commits_collapsed=self.git_commits_section.is_collapsed(),
         )
 
@@ -1015,19 +1063,24 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Deploy failed")
             return False
 
-        self._append_log("Command:")
-        self._append_log("  " + " ".join(result.command))
+        self._append_log("Command:", verbosity=LogVerbosity.DEBUG)
+        self._append_log("  " + " ".join(result.command), verbosity=LogVerbosity.DEBUG)
         if result.stdout.strip():
-            self._append_log(result.stdout.strip())
+            self._append_log(result.stdout.strip(), verbosity=LogVerbosity.DEBUG)
         if result.stderr.strip():
-            self._append_log(result.stderr.strip())
+            self._append_log(result.stderr.strip(), verbosity=LogVerbosity.DEBUG)
 
         if result.succeeded:
-            self._append_log(f"Deploy completed: current HEAD tree synced to:\n  {deploy_dir.resolve()}")
+            self._append_log(f"Deploy completed: current HEAD tree synced to:\n  {deploy_dir.resolve()}", verbosity=LogVerbosity.STATUS)
             self.statusBar().showMessage("Current HEAD tree deployed")
             self._schedule_autosave()
             return True
 
+        self._append_log(
+            f"Deploy failed with exit code {result.returncode}.",
+            verbosity=LogVerbosity.STATUS,
+            severity=LogSeverity.ERROR,
+        )
         self.statusBar().showMessage(f"Deploy failed with exit code {result.returncode}")
         return False
 
@@ -1090,19 +1143,31 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Pack creation failed")
             return
 
-        self._append_log("Command:")
-        self._append_log("  " + " ".join(result.command))
+        self._append_log("Command:", verbosity=LogVerbosity.DEBUG)
+        self._append_log("  " + " ".join(result.command), verbosity=LogVerbosity.DEBUG)
         if result.stdout.strip():
-            self._append_log(result.stdout.strip())
+            self._append_log(result.stdout.strip(), verbosity=LogVerbosity.DEBUG)
         if result.stderr.strip():
-            self._append_log(result.stderr.strip())
+            self._append_log(result.stderr.strip(), verbosity=LogVerbosity.DEBUG)
 
         if result.succeeded:
+            if result.archive_path is not None:
+                self._append_log(
+                    f"Pack created: {result.archive_path.name}",
+                    verbosity=LogVerbosity.STATUS,
+                )
+            else:
+                self._append_log("Pack created.", verbosity=LogVerbosity.STATUS)
             self._export_created_pack(result.archive_path)
             self.statusBar().showMessage("Pack created")
             self._refresh_artifact_lists()
             self._schedule_autosave()
         else:
+            self._append_log(
+                f"Pack creation failed with exit code {result.returncode}.",
+                verbosity=LogVerbosity.STATUS,
+                severity=LogSeverity.ERROR,
+            )
             self.statusBar().showMessage(f"Pack creation failed with exit code {result.returncode}")
 
     def _export_created_pack(self, archive_path: Path | None) -> None:
@@ -1130,7 +1195,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Pack export failed")
             return
 
-        self._append_log(f"Exported pack:\n  {destination}")
+        self._append_log(f"Exported pack:\n  {destination}", verbosity=LogVerbosity.STATUS)
         self.statusBar().showMessage("Pack exported")
 
     def _pack_drag_path(self, pack_path: Path) -> Path:
@@ -1189,7 +1254,8 @@ class MainWindow(QMainWindow):
         self._append_log(
             "Artifact lists refreshed:\n"
             f"  packs: {pack_count}\n"
-            f"  patches: {patch_count}"
+            f"  patches: {patch_count}",
+            verbosity=LogVerbosity.DEBUG,
         )
 
     def _populate_artifact_list(self, widget: QListWidget, artifacts: list[ArtifactInfo]) -> int:
@@ -1380,7 +1446,7 @@ class MainWindow(QMainWindow):
 
         self.patch_preview.clear()
         self._refresh_artifact_lists()
-        self._append_log(f"[cleanup] all saved sessions processed: {len(sessions)}")
+        self._append_log(f"[cleanup] all saved sessions processed: {len(sessions)}", verbosity=LogVerbosity.STATUS)
         self._append_log(f"[cleanup] packs deleted: {deleted_packs}")
         self._append_log(f"[cleanup] exported pack copies deleted: {deleted_exported}")
         self._append_log(f"[cleanup] patches deleted: {deleted_patches}")
@@ -1458,7 +1524,7 @@ class MainWindow(QMainWindow):
 
         self.patch_preview.clear()
         self._refresh_artifact_lists()
-        self._append_log(f"[cleanup] session files cleared: {self._current_session_name}")
+        self._append_log(f"[cleanup] session files cleared: {self._current_session_name}", verbosity=LogVerbosity.STATUS)
         self._append_log(f"[cleanup] packs deleted: {deleted_packs}")
         self._append_log(f"[cleanup] exported pack copies deleted: {deleted_exported}")
         self._append_log(f"[cleanup] patches deleted: {deleted_patches}")
@@ -1568,15 +1634,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Patch check failed")
             return
 
-        self._append_log("Command:")
-        self._append_log("  " + " ".join(result.command))
+        self._append_log("Command:", verbosity=LogVerbosity.DEBUG)
+        self._append_log("  " + " ".join(result.command), verbosity=LogVerbosity.DEBUG)
         if result.stdout.strip():
-            self._append_log(result.stdout.strip())
+            self._append_log(result.stdout.strip(), verbosity=LogVerbosity.DEBUG)
         if result.stderr.strip():
-            self._append_log(result.stderr.strip())
+            self._append_log(result.stderr.strip(), verbosity=LogVerbosity.DEBUG)
 
         if result.succeeded:
-            self._append_log("Patch check OK: clean apply is possible.")
+            self._append_log("Patch check OK: clean apply is possible.", verbosity=LogVerbosity.STATUS)
             self.statusBar().showMessage("Patch check OK")
         else:
             self._append_log("Patch check failed: clean apply is not possible; Apply patch may use fallback.")
@@ -1625,12 +1691,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Patch apply failed")
             return
 
-        self._append_log("Command:")
-        self._append_log("  " + " ".join(result.command))
+        self._append_log("Command:", verbosity=LogVerbosity.DEBUG)
+        self._append_log("  " + " ".join(result.command), verbosity=LogVerbosity.DEBUG)
         if result.stdout.strip():
-            self._append_log(result.stdout.strip())
+            self._append_log(result.stdout.strip(), verbosity=LogVerbosity.DEBUG)
         if result.stderr.strip():
-            self._append_log(result.stderr.strip())
+            self._append_log(result.stderr.strip(), verbosity=LogVerbosity.DEBUG)
 
         if result.succeeded:
             if dry_run:
@@ -1639,12 +1705,12 @@ class MainWindow(QMainWindow):
                 if commit_message and result.applied_with == "PackPatch":
                     self.commit_message_edit.clear()
                     self._append_log("Apply commit message field cleared after successful PackPatch commit.")
-                self._append_log(f"Apply completed via {result.applied_with}; commit was created.")
+                self._append_log(f"Patch applied via {result.applied_with}; commit was created.", verbosity=LogVerbosity.STATUS)
                 self.statusBar().showMessage(f"Patch applied via {result.applied_with} and committed")
                 self._auto_deploy_after_commit()
             else:
                 if not dry_run:
-                    self._append_log(f"Apply completed via {result.applied_with}; no commit was created.")
+                    self._append_log(f"Patch applied via {result.applied_with}; no commit was created.", verbosity=LogVerbosity.STATUS)
                     self._append_log("Auto deploy skipped: no commit was created.")
                 self.statusBar().showMessage(f"Patch applied via {result.applied_with}")
             self._refresh_repository_status()
@@ -1654,6 +1720,11 @@ class MainWindow(QMainWindow):
                 self._append_log("Auto pack creation skipped: patch did not apply new changes.")
             self._schedule_autosave()
         else:
+            self._append_log(
+                f"Patch apply failed with exit code {result.returncode}.",
+                verbosity=LogVerbosity.STATUS,
+                severity=LogSeverity.ERROR,
+            )
             self.statusBar().showMessage(f"Patch command failed with exit code {result.returncode}")
 
     def _undo_last_commit(self) -> None:
@@ -1665,18 +1736,23 @@ class MainWindow(QMainWindow):
         stash_after_undo = self.stash_changes_after_undo_check.isChecked()
         self._append_log("Undoing last commit with git reset --mixed HEAD~1...")
         result = undo_last_commit(self._repo_info.root, stash_changes=stash_after_undo)
-        self._append_log("Command:")
-        self._append_log("  " + " ".join(result.reset_command))
+        self._append_log("Command:", verbosity=LogVerbosity.DEBUG)
+        self._append_log("  " + " ".join(result.reset_command), verbosity=LogVerbosity.DEBUG)
         if result.reset_stdout.strip():
-            self._append_log(result.reset_stdout.strip())
+            self._append_log(result.reset_stdout.strip(), verbosity=LogVerbosity.DEBUG)
         if result.reset_stderr.strip():
-            self._append_log(result.reset_stderr.strip())
+            self._append_log(result.reset_stderr.strip(), verbosity=LogVerbosity.DEBUG)
 
         if not result.reset_succeeded:
+            self._append_log(
+                f"Undo failed with exit code {result.reset_returncode}.",
+                verbosity=LogVerbosity.STATUS,
+                severity=LogSeverity.ERROR,
+            )
             self.statusBar().showMessage(f"Undo failed with exit code {result.reset_returncode}")
             return
 
-        self._append_log("Last commit was reset; its changes remain in the working tree.")
+        self._append_log("Last commit was reset; its changes remain in the working tree.", verbosity=LogVerbosity.STATUS)
 
         if result.stash_requested:
             if result.unversioned_files:
@@ -1688,16 +1764,16 @@ class MainWindow(QMainWindow):
 
             self._append_log("Stashing working tree changes, including unversioned files...")
             if result.stash_command is not None:
-                self._append_log("Command:")
-                self._append_log("  " + " ".join(result.stash_command))
+                self._append_log("Command:", verbosity=LogVerbosity.DEBUG)
+                self._append_log("  " + " ".join(result.stash_command), verbosity=LogVerbosity.DEBUG)
             if result.stash_stdout.strip():
-                self._append_log(result.stash_stdout.strip())
+                self._append_log(result.stash_stdout.strip(), verbosity=LogVerbosity.DEBUG)
             if result.stash_stderr.strip():
-                self._append_log(result.stash_stderr.strip())
+                self._append_log(result.stash_stderr.strip(), verbosity=LogVerbosity.DEBUG)
 
             if result.stash_succeeded:
                 if result.stash_ref:
-                    self._append_log(f"Stash created: {result.stash_ref}")
+                    self._append_log(f"Stash created: {result.stash_ref}", verbosity=LogVerbosity.STATUS)
                 else:
                     self._append_log("Stash completed; no stash entry was created.")
                 self.statusBar().showMessage("Last commit undone and changes stashed")
@@ -1749,14 +1825,73 @@ class MainWindow(QMainWindow):
         self._append_log(f"Copied commit hash: {commit_hash}")
         self.statusBar().showMessage("Copied commit hash")
 
-    def _append_log(self, message: str) -> None:
-        """Append timestamped log output with lightweight severity-based coloring."""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        lines = message.splitlines() or [""]
-        timestamped_lines = [f"[{timestamp}] {line}" for line in lines]
-        html_lines = [self._format_log_line(line) for line in timestamped_lines]
-        self.log.append("<br>".join(html_lines))
+    def _append_log(
+        self,
+        message: str,
+        *,
+        verbosity: LogVerbosity = LogVerbosity.DETAILS,
+        severity: LogSeverity | None = None,
+    ) -> None:
+        """Store a structured log entry and render it when the active filter allows it."""
+        entry = LogEntry(
+            timestamp=datetime.now().strftime("%H:%M:%S"),
+            message=message,
+            verbosity=verbosity,
+            severity=severity if severity is not None else self._infer_log_severity(message),
+        )
+        self._log_entries.append(entry)
+        if self._log_entry_is_visible(entry):
+            self.log.append(self._render_log_entry(entry))
+            self._scroll_log_to_bottom()
+
+    def _log_verbosity_changed(self) -> None:
+        self._render_log_entries()
+        self._schedule_autosave()
+
+    def _set_log_verbosity(self, name: str) -> None:
+        normalized = name if name in {"status", "details", "debug"} else "status"
+        index = self.log_verbosity_combo.findData(normalized)
+        self.log_verbosity_combo.setCurrentIndex(index if index >= 0 else 0)
+        self._render_log_entries()
+
+    def _current_log_verbosity_name(self) -> str:
+        value = self.log_verbosity_combo.currentData()
+        return value if isinstance(value, str) and value in {"status", "details", "debug"} else "status"
+
+    def _current_log_verbosity(self) -> LogVerbosity:
+        return {
+            "status": LogVerbosity.STATUS,
+            "details": LogVerbosity.DETAILS,
+            "debug": LogVerbosity.DEBUG,
+        }[self._current_log_verbosity_name()]
+
+    def _log_entry_is_visible(self, entry: LogEntry) -> bool:
+        return (
+            entry.severity >= LogSeverity.WARNING
+            or entry.verbosity <= self._current_log_verbosity()
+        )
+
+    def _render_log_entries(self) -> None:
+        html_entries = [
+            self._render_log_entry(entry)
+            for entry in self._log_entries
+            if self._log_entry_is_visible(entry)
+        ]
+        self.log.setHtml("<br>".join(html_entries))
         self._scroll_log_to_bottom()
+
+    def _render_log_entry(self, entry: LogEntry) -> str:
+        lines = entry.message.splitlines() or [""]
+        timestamped_lines = [f"[{entry.timestamp}] {line}" for line in lines]
+        return "<br>".join(self._format_log_line(line) for line in timestamped_lines)
+
+    def _infer_log_severity(self, message: str) -> LogSeverity:
+        lower = message.lower()
+        if self._is_error_log_line(lower):
+            return LogSeverity.ERROR
+        if self._is_warning_log_line(lower):
+            return LogSeverity.WARNING
+        return LogSeverity.INFO
 
     def _scroll_log_to_bottom(self) -> None:
         self.log.moveCursor(QTextCursor.MoveOperation.End)

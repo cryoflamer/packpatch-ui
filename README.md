@@ -55,7 +55,7 @@ Packs are created with `tools/pack-for-chatgpt.sh` and stored in `chatgpt-packs/
 - apply patch files with selectable PackPatch/Compatсh strategy;
 - fallback support between `git am` and `git apply`;
 - patch preview panel;
-- colored log output.
+- structured log output with `Status`, `Details`, and `Debug` verbosity filters; warnings and errors stay visible at every level.
 
 ### Commit workflow
 
@@ -80,7 +80,8 @@ A session remembers:
 - commit message;
 - selected files;
 - collapsed/expanded UI sections;
-- window geometry.
+- window geometry;
+- per-session log verbosity.
 
 Session data is stored under the user config directory, for example:
 
