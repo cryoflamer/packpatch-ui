@@ -79,7 +79,7 @@ def create_pack(
 
     sensitive_args = ["--include-sensitive"] if include_sensitive else []
     unversioned_args = ["--include-untracked"] if include_unversioned else []
-    history_args = ["--history-depth", str(max(0, history_depth))]
+    history_args = ["--history-depth", str(max(1, history_depth))]
 
     if mode == "slice":
         files = [path.strip() for path in selected_files if path.strip()]
