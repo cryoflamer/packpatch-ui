@@ -56,6 +56,7 @@ from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAM
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
 from packpatch_ui.ui.file_tree import FileTreeWidget
+from packpatch_ui.ui.settings_dialog import SettingsDialog
 
 
 class MainWindow(QMainWindow):
@@ -74,6 +75,7 @@ class MainWindow(QMainWindow):
         self.save_session_button = QPushButton("Save", self)
         self.save_session_as_button = QPushButton("Save as...", self)
         self.delete_session_button = QPushButton("Delete", self)
+        self.settings_button = QPushButton("Settings...", self)
 
         self.repo_path_edit = QLineEdit(self)
         self.repo_path_edit.setPlaceholderText("Select a git repository...")
@@ -127,6 +129,15 @@ class MainWindow(QMainWindow):
         self.check_latest_patch_button = QPushButton("Check patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run patch", self)
         self.apply_latest_patch_button = QPushButton("Apply patch", self)
+
+        self.settings_dialog = SettingsDialog(
+            auto_export_pack_check=self.auto_export_pack_check,
+            include_sensitive_files_check=self.include_sensitive_files_check,
+            apply_mode_combo=self.apply_mode_combo,
+            allow_unversioned_apply_check=self.allow_unversioned_apply_check,
+            auto_deploy_after_commit_check=self.auto_deploy_after_commit_check,
+            parent=self,
+        )
 
         self.refresh_artifacts_button = QPushButton("Refresh packs/patch files", self)
         self.copy_pack_path_button = QPushButton("Copy pack path", self)
@@ -199,6 +210,7 @@ class MainWindow(QMainWindow):
         session_row.addWidget(self.save_session_button)
         session_row.addWidget(self.save_session_as_button)
         session_row.addWidget(self.delete_session_button)
+        session_row.addWidget(self.settings_button)
 
         repo_row = QHBoxLayout()
         repo_row.addWidget(self.repo_path_edit, stretch=1)
@@ -232,18 +244,15 @@ class MainWindow(QMainWindow):
         pack_controls.addWidget(self.create_pack_button)
 
         export_controls = QHBoxLayout()
-        export_controls.addWidget(self.auto_export_pack_check)
         export_controls.addWidget(QLabel("Export dir:", widget))
         export_controls.addWidget(self.export_dir_edit, stretch=1)
         export_controls.addWidget(self.browse_export_dir_button)
-        export_controls.addWidget(self.include_sensitive_files_check)
 
         deploy_controls = QHBoxLayout()
         deploy_controls.addWidget(QLabel("Deploy dir:", widget))
         deploy_controls.addWidget(self.deploy_dir_edit, stretch=1)
         deploy_controls.addWidget(self.browse_deploy_dir_button)
         deploy_controls.addWidget(self.deploy_repo_button)
-        deploy_controls.addWidget(self.auto_deploy_after_commit_check)
 
         commit_controls = QHBoxLayout()
         commit_controls.addWidget(QLabel("Apply commit message:", widget))
@@ -255,9 +264,6 @@ class MainWindow(QMainWindow):
         patch_controls.addWidget(self.browse_patch_dir_button)
         patch_controls.addWidget(QLabel("Patch target:", widget))
         patch_controls.addWidget(self.patch_target_combo)
-        patch_controls.addWidget(QLabel("Apply mode:", widget))
-        patch_controls.addWidget(self.apply_mode_combo)
-        patch_controls.addWidget(self.allow_unversioned_apply_check)
         patch_controls.addWidget(self.check_latest_patch_button)
         patch_controls.addWidget(self.dry_run_patch_button)
         patch_controls.addWidget(self.apply_latest_patch_button)
@@ -364,6 +370,7 @@ class MainWindow(QMainWindow):
             self.save_session_button: "session.save",
             self.save_session_as_button: "session.save_as",
             self.delete_session_button: "session.delete",
+            self.settings_button: "settings.open",
             self.repo_path_edit: "repo.path",
             self.browse_button: "repo.browse",
             self.refresh_button: "repo.refresh",
@@ -430,6 +437,7 @@ class MainWindow(QMainWindow):
         self.save_session_button.clicked.connect(self._save_current_session)
         self.save_session_as_button.clicked.connect(self._save_session_as)
         self.delete_session_button.clicked.connect(self._delete_current_session)
+        self.settings_button.clicked.connect(self.settings_dialog.show_settings)
         self._autosave_timer.timeout.connect(self._autosave_current_session)
 
         self.browse_button.clicked.connect(self._browse_repository)

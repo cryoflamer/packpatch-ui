@@ -46,5 +46,6 @@
   "deploy.browse_dir": "Choose the deploy directory for the committed repository tree.",
   "deploy.run": "Deploy the committed HEAD tree into the deploy directory with rsync --delete, without copying untracked files.",
   "deploy.auto_after_commit": "Automatically deploy the committed HEAD tree after Apply patch creates a commit, including Compatсh patches applied with git am.",
-  "patch.allow_unversioned": "Allow patch apply when the repository contains only unversioned, non-ignored files. Modified or staged tracked files still block apply. This setting is saved per session/repository workflow."
+  "patch.allow_unversioned": "Allow patch apply when the repository contains only unversioned, non-ignored files. Modified or staged tracked files still block apply. This setting is saved per session/repository workflow.",
+  "settings.open": "Open per-session behavior settings for pack creation, patch apply, and automatic deployment."
 }
