@@ -9,7 +9,7 @@
   "repo.refresh": "Refresh repository status, file list, packs, patch files, and commit history.",
   "repo.status": "Current git repository status: root, branch, and clean/dirty state.",
   "pack.mode": "Choose how to create the pack: selected files, changed files, full repository snapshot, or shallow history clone.",
-  "pack.task": "Task name used in the generated pack archive name. If empty, PackPatch UI fills a default based on the selected mode.",
+  "pack.task": "Pack name used in the generated archive filename. If empty, PackPatch UI uses the current repository directory name.",
   "pack.create": "Create a chatgpt-pack archive from the current repository using the selected pack mode.",
   "pack.auto_export": "Copy each newly created pack to the export directory automatically.",
   "pack.include_sensitive": "Include tracked keys and certificates that are normally excluded from packs (*.key, *.crt, *.pem, *.p12, *.pfx, *.cer). Untracked sensitive files remain excluded.",

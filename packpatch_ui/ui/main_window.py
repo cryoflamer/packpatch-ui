@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
             self.pack_mode_combo.addItem(label, mode)
 
         self.task_name_edit = QLineEdit(self)
-        self.task_name_edit.setPlaceholderText("Task name for pack, e.g. fix-ui")
+        self.task_name_edit.setPlaceholderText("Pack name, e.g. packpatch, vpn, ias")
         self.create_pack_button = QPushButton("Create pack", self)
 
         self.auto_export_pack_check = QCheckBox("Auto export pack", self)
@@ -238,7 +238,7 @@ class MainWindow(QMainWindow):
         pack_controls = QHBoxLayout()
         pack_controls.addWidget(QLabel("Pack mode:", widget))
         pack_controls.addWidget(self.pack_mode_combo)
-        pack_controls.addWidget(QLabel("Task:", widget))
+        pack_controls.addWidget(QLabel("Pack name:", widget))
         pack_controls.addWidget(self.task_name_edit, stretch=1)
         pack_controls.addWidget(self.create_pack_button)
 
@@ -786,6 +786,8 @@ class MainWindow(QMainWindow):
         self.root_value.setToolTip(str(info.root))
         self.branch_value.setText(info.branch or "detached HEAD")
         self.status_value.setText("dirty" if info.is_dirty else "clean")
+        if not self.task_name_edit.text().strip():
+            self.task_name_edit.setText(self._default_pack_name(self._current_pack_mode()))
 
         files = list_repo_files(info.root)
         self.file_tree.set_files(files)
@@ -914,9 +916,14 @@ class MainWindow(QMainWindow):
         mode = self.apply_mode_combo.currentData()
         return str(mode or APPLY_MODE_COMPATCH_THEN_PACKPATCH)
 
+    def _default_pack_name(self, mode: str) -> str:
+        if self._repo_info is not None and self._repo_info.root.name:
+            return self._repo_info.root.name
+        return default_task_name_for_mode(mode)
+
     def _pack_mode_changed(self) -> None:
         if not self.task_name_edit.text().strip():
-            self.task_name_edit.setText(default_task_name_for_mode(self._current_pack_mode()))
+            self.task_name_edit.setText(self._default_pack_name(self._current_pack_mode()))
         self._schedule_autosave()
 
     def _ensure_task_name_for_mode(self, mode: str) -> str:
@@ -924,7 +931,7 @@ class MainWindow(QMainWindow):
         if task_name:
             return task_name
 
-        task_name = default_task_name_for_mode(mode)
+        task_name = self._default_pack_name(mode)
         self.task_name_edit.setText(task_name)
         return task_name
 
