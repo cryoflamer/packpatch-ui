@@ -30,6 +30,21 @@ class GitRepoInfo:
     is_dirty: bool
 
 
+@dataclass(frozen=True)
+class GitRepoStateSnapshot:
+    """Lightweight repository state used by the runtime watcher."""
+
+    root: Path
+    branch: str
+    head: str
+    status_porcelain: str
+
+    @property
+    def is_dirty(self) -> bool:
+        """Return whether tracked or untracked repository state is dirty."""
+        return bool(self.status_porcelain.strip())
+
+
 def find_git_root(start_dir: Path) -> Path | None:
     """Return the git root for *start_dir*, or None if it is not inside a git repository."""
     result = run_process(["git", "rev-parse", "--show-toplevel"], cwd=start_dir, check=False)
@@ -38,15 +53,25 @@ def find_git_root(start_dir: Path) -> Path | None:
     return Path(result.stdout.strip())
 
 
-def read_git_repo_info(start_dir: Path) -> GitRepoInfo | None:
-    """Read basic repository information for *start_dir*."""
+def read_git_repo_state_snapshot(start_dir: Path) -> GitRepoStateSnapshot | None:
+    """Read a lightweight branch/HEAD/status snapshot for *start_dir*."""
     root = find_git_root(start_dir)
     if root is None:
         return None
 
     branch = run_process(["git", "branch", "--show-current"], cwd=root).stdout.strip()
+    head_result = run_process(["git", "rev-parse", "HEAD"], cwd=root, check=False)
+    head = head_result.stdout.strip() if head_result.returncode == 0 else ""
     status = run_process(["git", "status", "--porcelain"], cwd=root).stdout
-    return GitRepoInfo(root=root, branch=branch, is_dirty=bool(status.strip()))
+    return GitRepoStateSnapshot(root=root, branch=branch, head=head, status_porcelain=status)
+
+
+def read_git_repo_info(start_dir: Path) -> GitRepoInfo | None:
+    """Read basic repository information for *start_dir*."""
+    snapshot = read_git_repo_state_snapshot(start_dir)
+    if snapshot is None:
+        return None
+    return GitRepoInfo(root=snapshot.root, branch=snapshot.branch, is_dirty=snapshot.is_dirty)
 
 
 def list_changed_files(root: Path) -> list[str]:

@@ -26,6 +26,7 @@ class SettingsDialog(QDialog):
         apply_mode_combo: QComboBox,
         allow_unversioned_apply_check: QCheckBox,
         stash_changes_after_undo_check: QCheckBox,
+        watch_repository_state_check: QCheckBox,
         auto_deploy_after_commit_check: QCheckBox,
         parent: QWidget | None = None,
     ) -> None:
@@ -46,6 +47,10 @@ class SettingsDialog(QDialog):
         apply_layout.addRow(allow_unversioned_apply_check)
         apply_layout.addRow(stash_changes_after_undo_check)
 
+        repository_group = QGroupBox("Repository", self)
+        repository_layout = QVBoxLayout(repository_group)
+        repository_layout.addWidget(watch_repository_state_check)
+
         deploy_group = QGroupBox("Deploy", self)
         deploy_layout = QVBoxLayout(deploy_group)
         deploy_layout.addWidget(auto_deploy_after_commit_check)
@@ -56,6 +61,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(pack_group)
         layout.addWidget(apply_group)
+        layout.addWidget(repository_group)
         layout.addWidget(deploy_group)
         layout.addWidget(buttons)
 

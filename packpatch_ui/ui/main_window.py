@@ -37,10 +37,11 @@ from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack
 from packpatch_ui.core.deploy_runner import deploy_repo
 from packpatch_ui.core.git_repo import (
     GitRepoInfo,
+    GitRepoStateSnapshot,
     list_changed_files,
     list_recent_commits,
     list_repo_files,
-    read_git_repo_info,
+    read_git_repo_state_snapshot,
 )
 from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
 from packpatch_ui.core.patch_runner import (
@@ -71,6 +72,8 @@ class MainWindow(QMainWindow):
         self._loading_session = False
         self._current_session_name = DEFAULT_SESSION_NAME
         self._geometry_restore_done = False
+        self._repo_state_snapshot: GitRepoStateSnapshot | None = None
+        self._repository_watch_busy = False
 
         self.session_combo = QComboBox(self)
         self.new_session_button = QPushButton("New", self)
@@ -130,6 +133,7 @@ class MainWindow(QMainWindow):
             self.apply_mode_combo.addItem(label, mode)
         self.allow_unversioned_apply_check = QCheckBox("Allow unversioned files during apply", self)
         self.stash_changes_after_undo_check = QCheckBox("Stash changes after undo", self)
+        self.watch_repository_state_check = QCheckBox("Watch repository state", self)
         self.check_latest_patch_button = QPushButton("Check patch", self)
         self.dry_run_patch_button = QPushButton("Dry-run patch", self)
         self.apply_latest_patch_button = QPushButton("Apply patch", self)
@@ -141,6 +145,7 @@ class MainWindow(QMainWindow):
             apply_mode_combo=self.apply_mode_combo,
             allow_unversioned_apply_check=self.allow_unversioned_apply_check,
             stash_changes_after_undo_check=self.stash_changes_after_undo_check,
+            watch_repository_state_check=self.watch_repository_state_check,
             auto_deploy_after_commit_check=self.auto_deploy_after_commit_check,
             parent=self,
         )
@@ -181,6 +186,9 @@ class MainWindow(QMainWindow):
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.setInterval(750)
 
+        self._repository_watch_timer = QTimer(self)
+        self._repository_watch_timer.setInterval(1000)
+
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 780)
         self.setCentralWidget(self._build_central_widget())
@@ -190,6 +198,7 @@ class MainWindow(QMainWindow):
         self._current_session_name = self._session_store.load_active_session_name()
         self._reload_session_combo(select_name=self._current_session_name)
         self._load_current_session()
+        self._repository_watch_timer.start()
         if not self._geometry_restore_done:
             self._center_on_primary_screen()
             self._geometry_restore_done = True
@@ -406,6 +415,7 @@ class MainWindow(QMainWindow):
             self.apply_mode_combo: "patch.apply_mode",
             self.allow_unversioned_apply_check: "patch.allow_unversioned",
             self.stash_changes_after_undo_check: "commit.stash_after_undo",
+            self.watch_repository_state_check: "repo.watch_state",
             self.check_latest_patch_button: "patch.check",
             self.dry_run_patch_button: "patch.dry_run",
             self.apply_latest_patch_button: "patch.apply",
@@ -450,6 +460,7 @@ class MainWindow(QMainWindow):
         self.delete_session_button.clicked.connect(self._delete_current_session)
         self.settings_button.clicked.connect(self.settings_dialog.show_settings)
         self._autosave_timer.timeout.connect(self._autosave_current_session)
+        self._repository_watch_timer.timeout.connect(self._poll_repository_state)
 
         self.browse_button.clicked.connect(self._browse_repository)
         self.refresh_button.clicked.connect(lambda: self._refresh_repository_status())
@@ -460,6 +471,7 @@ class MainWindow(QMainWindow):
         self.apply_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.allow_unversioned_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.stash_changes_after_undo_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.watch_repository_state_check.toggled.connect(self._repository_watch_setting_changed)
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.include_sensitive_files_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.auto_create_pack_after_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
@@ -544,6 +556,7 @@ class MainWindow(QMainWindow):
             self._set_apply_mode(session.apply_mode)
             self.allow_unversioned_apply_check.setChecked(session.allow_unversioned_apply)
             self.stash_changes_after_undo_check.setChecked(session.stash_changes_after_undo)
+            self.watch_repository_state_check.setChecked(session.watch_repository_state)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
             self.auto_create_pack_after_apply_check.setChecked(session.auto_create_pack_after_apply)
@@ -634,6 +647,7 @@ class MainWindow(QMainWindow):
             apply_mode=self._current_apply_mode(),
             allow_unversioned_apply=self.allow_unversioned_apply_check.isChecked(),
             stash_changes_after_undo=self.stash_changes_after_undo_check.isChecked(),
+            watch_repository_state=self.watch_repository_state_check.isChecked(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
             auto_create_pack_after_apply=self.auto_create_pack_after_apply_check.isChecked(),
@@ -752,7 +766,7 @@ class MainWindow(QMainWindow):
             self._refresh_artifact_lists()
             self._schedule_autosave()
 
-    def _refresh_repository_status(self, selected_files: object = None) -> None:
+    def _refresh_repository_status(self, selected_files: object = None, *, log_result: bool = True) -> None:
         raw_path = self.repo_path_edit.text().strip()
         if not raw_path:
             self._set_no_repo("Repository path is empty.")
@@ -763,11 +777,13 @@ class MainWindow(QMainWindow):
             self._set_no_repo(f"Path does not exist: {start_dir}")
             return
 
-        info = read_git_repo_info(start_dir)
-        if info is None:
+        snapshot = read_git_repo_state_snapshot(start_dir)
+        if snapshot is None:
             self._set_no_repo(f"Not inside a git repository: {start_dir}")
             return
 
+        info = GitRepoInfo(root=snapshot.root, branch=snapshot.branch, is_dirty=snapshot.is_dirty)
+        self._repo_state_snapshot = snapshot
         self._repo_info = info
         self.root_value.setText(str(info.root))
         self.branch_value.setText(info.branch or "detached HEAD")
@@ -785,13 +801,68 @@ class MainWindow(QMainWindow):
         self._schedule_autosave()
 
         self.statusBar().showMessage("Repository status refreshed")
-        self._append_log(
-            "Repository status refreshed:\n"
-            f"  root: {info.root}\n"
-            f"  branch: {info.branch or 'detached HEAD'}\n"
-            f"  status: {'dirty' if info.is_dirty else 'clean'}\n"
-            f"  files: {len(files)}"
-        )
+        if log_result:
+            self._append_log(
+                "Repository status refreshed:\n"
+                f"  root: {info.root}\n"
+                f"  branch: {info.branch or 'detached HEAD'}\n"
+                f"  status: {'dirty' if info.is_dirty else 'clean'}\n"
+                f"  files: {len(files)}"
+            )
+
+    def _repository_watch_setting_changed(self, checked: bool) -> None:
+        """Persist watcher preference and reset its comparison baseline when enabled."""
+        self._schedule_autosave()
+        if checked:
+            raw_path = self.repo_path_edit.text().strip()
+            if raw_path:
+                self._repo_state_snapshot = read_git_repo_state_snapshot(Path(raw_path).expanduser())
+
+    def _poll_repository_state(self) -> None:
+        """Refresh repository UI when branch, HEAD, or porcelain status changes externally."""
+        if (
+            self._repository_watch_busy
+            or self._loading_session
+            or not self.watch_repository_state_check.isChecked()
+        ):
+            return
+
+        raw_path = self.repo_path_edit.text().strip()
+        if not raw_path:
+            return
+
+        start_dir = Path(raw_path).expanduser()
+        if not start_dir.exists():
+            return
+
+        self._repository_watch_busy = True
+        try:
+            snapshot = read_git_repo_state_snapshot(start_dir)
+            previous = self._repo_state_snapshot
+            if snapshot is None:
+                return
+            if previous is None:
+                self._repo_state_snapshot = snapshot
+                return
+            if snapshot == previous:
+                return
+
+            if snapshot.root != previous.root:
+                self._append_log(f"[repo] repository root changed: {previous.root} -> {snapshot.root}")
+            if snapshot.branch != previous.branch:
+                old_branch = previous.branch or "detached HEAD"
+                new_branch = snapshot.branch or "detached HEAD"
+                self._append_log(f"[repo] branch changed: {old_branch} -> {new_branch}")
+            if snapshot.head != previous.head:
+                old_head = previous.head[:12] or "unborn"
+                new_head = snapshot.head[:12] or "unborn"
+                self._append_log(f"[repo] HEAD changed: {old_head} -> {new_head}")
+
+            selected_files = self.file_tree.selected_paths()
+            self._refresh_repository_status(selected_files=selected_files, log_result=False)
+            self.statusBar().showMessage("Repository state updated")
+        finally:
+            self._repository_watch_busy = False
 
     def _normalize_selected_files(self, selected_files: object) -> list[str] | None:
         if selected_files is None or isinstance(selected_files, bool):
@@ -806,6 +877,7 @@ class MainWindow(QMainWindow):
 
     def _set_no_repo(self, message: str) -> None:
         self._repo_info = None
+        self._repo_state_snapshot = None
         self.root_value.setText("-")
         self.branch_value.setText("-")
         self.status_value.setText("not available")
