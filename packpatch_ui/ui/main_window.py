@@ -52,6 +52,7 @@ from packpatch_ui.core.patch_runner import (
     read_patch_preview,
     undo_last_commit,
 )
+from packpatch_ui.services.process_runner import run_process
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
@@ -142,6 +143,7 @@ class MainWindow(QMainWindow):
 
         self.refresh_artifacts_button = QPushButton("Refresh packs/patch files", self)
         self.copy_pack_path_button = QPushButton("Copy pack path", self)
+        self.show_pack_in_explorer_button = QPushButton("Show in Explorer", self)
         self.copy_patch_path_button = QPushButton("Copy patch path", self)
         self.delete_pack_button = QPushButton("Delete pack", self)
         self.delete_patch_button = QPushButton("Delete patch", self)
@@ -281,6 +283,7 @@ class MainWindow(QMainWindow):
         pack_column.setSpacing(4)
         pack_actions = QHBoxLayout()
         pack_actions.addWidget(self.copy_pack_path_button)
+        pack_actions.addWidget(self.show_pack_in_explorer_button)
         pack_actions.addWidget(self.delete_pack_button)
         pack_actions.addStretch(1)
         self.delete_pack_button.setText("Delete selected packs")
@@ -390,6 +393,7 @@ class MainWindow(QMainWindow):
             self.packs_section: "pack.list",
             self.pack_list: "pack.list",
             self.copy_pack_path_button: "pack.copy_path",
+            self.show_pack_in_explorer_button: "pack.show_in_explorer",
             self.delete_pack_button: "pack.delete",
             self.patch_dir_edit: "patch.dir",
             self.browse_patch_dir_button: "patch.browse_dir",
@@ -475,6 +479,8 @@ class MainWindow(QMainWindow):
         self.apply_latest_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=False))
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
         self.copy_pack_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.pack_list, "pack"))
+        self.show_pack_in_explorer_button.clicked.connect(self._show_selected_pack_in_explorer)
+        self.pack_list.itemDoubleClicked.connect(lambda *_: self._show_selected_pack_in_explorer())
         self.copy_patch_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.patch_list, "patch"))
         self.delete_pack_button.clicked.connect(lambda: self._delete_selected_artifacts(self.pack_list, "pack"))
         self.delete_patch_button.clicked.connect(
@@ -1009,6 +1015,39 @@ class MainWindow(QMainWindow):
             if exported_path.is_file():
                 return exported_path
         return pack_path
+
+    def _show_selected_pack_in_explorer(self) -> None:
+        """Open Windows Explorer and select the preferred copy of the current pack."""
+        item = self.pack_list.currentItem()
+        if item is None:
+            self._append_log("Cannot show pack in Explorer: no pack selected.")
+            self.statusBar().showMessage("No pack selected")
+            return
+
+        value = item.data(Qt.ItemDataRole.UserRole)
+        if not isinstance(value, str) or not value:
+            self._append_log("Cannot show pack in Explorer: selected pack has no path metadata.")
+            self.statusBar().showMessage("Cannot show pack in Explorer")
+            return
+
+        pack_path = self._pack_drag_path(Path(value).expanduser())
+        if not pack_path.is_file():
+            self._append_log(f"Cannot show pack in Explorer: file not found:\n  {pack_path}")
+            self.statusBar().showMessage("Pack file not found")
+            return
+
+        try:
+            windows_path = run_process(["wslpath", "-w", str(pack_path.resolve())]).stdout.strip()
+            if not windows_path:
+                raise ValueError("wslpath returned an empty Windows path")
+            run_process(["explorer.exe", f"/select,{windows_path}"], check=False)
+        except (FileNotFoundError, OSError, ValueError) as error:
+            self._append_log(f"Cannot show pack in Explorer: {error}")
+            self.statusBar().showMessage("Explorer open failed")
+            return
+
+        self._append_log(f"Opened pack in Explorer:\n  {pack_path}")
+        self.statusBar().showMessage("Pack shown in Explorer")
 
     def _refresh_artifact_lists(self) -> None:
         self.pack_list.clear()
