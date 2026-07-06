@@ -15,7 +15,7 @@
   "pack.include_sensitive": "Include tracked keys and certificates that are normally excluded from packs (*.key, *.crt, *.pem, *.p12, *.pfx, *.cer). Untracked sensitive files remain excluded.",
   "pack.export_dir": "Directory where newly created packs are copied when auto export is enabled.",
   "pack.browse_export": "Choose the pack export directory.",
-  "pack.list": "Recently created chatgpt-pack archives in this repository.",
+  "pack.list": "Recently created chatgpt-pack archives in this repository. Drag a pack into another application to copy/upload it; the exported copy is preferred when available.",
   "pack.copy_path": "Copy the selected pack path to the clipboard.",
   "pack.delete": "Delete selected pack archives after confirmation.",
   "patch.dir": "Directory containing patch files returned by ChatGPT, usually your Downloads folder.",

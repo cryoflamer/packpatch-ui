@@ -55,6 +55,7 @@ from packpatch_ui.core.patch_runner import (
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
+from packpatch_ui.ui.artifact_list import FileDragListWidget
 from packpatch_ui.ui.file_tree import FileTreeWidget
 from packpatch_ui.ui.settings_dialog import SettingsDialog
 
@@ -144,7 +145,7 @@ class MainWindow(QMainWindow):
         self.copy_patch_path_button = QPushButton("Copy patch path", self)
         self.delete_pack_button = QPushButton("Delete pack", self)
         self.delete_patch_button = QPushButton("Delete patch", self)
-        self.pack_list = QListWidget(self)
+        self.pack_list = FileDragListWidget(drag_path_resolver=self._pack_drag_path, parent=self)
         self.patch_list = QListWidget(self)
         self.pack_list.setAlternatingRowColors(True)
         self.patch_list.setAlternatingRowColors(True)
@@ -999,6 +1000,15 @@ class MainWindow(QMainWindow):
 
         self._append_log(f"Exported pack:\n  {destination}")
         self.statusBar().showMessage("Pack exported")
+
+    def _pack_drag_path(self, pack_path: Path) -> Path:
+        """Prefer the exported Windows-accessible copy for pack file drags."""
+        export_dir_text = self.export_dir_edit.text().strip()
+        if export_dir_text:
+            exported_path = Path(export_dir_text).expanduser() / pack_path.name
+            if exported_path.is_file():
+                return exported_path
+        return pack_path
 
     def _refresh_artifact_lists(self) -> None:
         self.pack_list.clear()
