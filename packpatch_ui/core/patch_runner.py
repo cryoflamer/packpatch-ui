@@ -416,6 +416,28 @@ def _packpatch_already_applied_result(repo_root: Path, patch_path: Path) -> Patc
     )
 
 
+
+def _compatch_already_applied_result(repo_root: Path, patch_path: Path) -> PatchApplyResult | None:
+    """Return a success result when a Compatсh diff is already present in the tree."""
+    command = ["git", "apply", "--reverse", "--check", str(patch_path)]
+    result = run_process(command, cwd=repo_root, check=False)
+    if result.returncode != 0:
+        return None
+
+    return PatchApplyResult(
+        command=command,
+        returncode=0,
+        stdout=(
+            "Compatсh changes already exist in the working tree; skipping apply.\n"
+            "No new changes were applied.\n"
+        ),
+        stderr=result.stderr,
+        selected_patch=patch_path,
+        created_commit=False,
+        was_applied=False,
+        applied_with="Compatсh",
+    )
+
 def _looks_already_applied(output: str) -> bool:
     """Return True for common git-am messages produced by already applied patches."""
     lowered = output.lower()
@@ -505,6 +527,10 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
             selected_patch=patch_path,
             applied_with="Compatсh",
         )
+
+    already_applied_result = _compatch_already_applied_result(repo_root, patch_path)
+    if already_applied_result is not None:
+        return already_applied_result
 
     identity_error = _git_identity_error(repo_root)
     if identity_error:
