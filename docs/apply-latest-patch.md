@@ -179,9 +179,9 @@ Strict mode означає: дозволити тільки чисте заст�
  tools/apply-latest-patch.sh --strict -d /mnt/c/Users/Lenovo/Downloads/
 ```
 
-## Зв’язок із Пакпатчем
+## Зв’язок із PackPatch UI
 
-`apply-latest-patch.sh` добре лягає на workflow Пакпатча:
+`apply-latest-patch.sh` є насамперед legacy/CLI-утилітою для PackPatch `git diff` файлів і добре лягає на такий workflow:
 
 1. Створюється `chatgpt-pack-*` архів.
 2. ChatGPT працює всередині disposable repo.
@@ -189,7 +189,7 @@ Strict mode означає: дозволити тільки чисте заст�
 4. Користувач завантажує patch.
 5. `apply-latest-patch.sh` застосовує останній patch із директорії завантажень.
 
-Таким чином ChatGPT генерує тільки `git diff`, а локальний скрипт детерміновано застосовує цей diff до реальної репи.
+У цьому CLI workflow ChatGPT генерує `git diff`, а локальний скрипт детерміновано застосовує цей diff до реальної репи. Сам PackPatch UI додатково підтримує Compatсh: реальний commit, експортований через `git format-patch` і застосований через `git am`. Для canonical правил обох режимів дивись `docs/packpatch-prompt.md`.
 
 ## Що важливо пам’ятати
 
@@ -197,4 +197,5 @@ Strict mode означає: дозволити тільки чисте заст�
 - Перед застосуванням складних patch-файлів бажано подивитись `git status`.
 - Якщо є важливі локальні зміни, краще зробити commit або stash вручну.
 - Якщо patch застосувався з конфліктами, це нормальний стан: їх треба розв’язати як звичайні merge-конфлікти.
-- Якщо patch був згенерований через Пакпатч, він має відповідати реальним шляхам у репі.
+- Якщо patch був згенерований через PackPatch, він має відповідати реальним шляхам у репі.
+- Для Compatсh використовуй workflow PackPatch UI або `git am`; цей документ не визначає canonical Compatсh apply semantics.

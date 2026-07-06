@@ -22,7 +22,7 @@ repo -> pack -> ChatGPT -> patch -> apply -> commit
 
 The core rule is simple: ChatGPT works from a disposable git repository archive and returns either a PackPatch `git diff` file or a Compatсh `git format-patch` file.
 
-For the prompt that should be given to ChatGPT, see [docs/packpatch-prompt.md](docs/packpatch-prompt.md).
+For the canonical prompts and workflow rules that should be given to ChatGPT, see [docs/packpatch-prompt.md](docs/packpatch-prompt.md).
 
 ## Features
 
@@ -35,7 +35,7 @@ Supported pack modes:
 - `full` — tracked project files;
 - `full + untracked` — tracked files plus untracked non-ignored files.
 
-`Git history depth` in Settings controls how many real source commits are preserved in every pack mode. The default is `1`; `0` uses a synthetic disposable base with no source history.
+`Git history depth` in Settings controls how many real source commits are preserved in every UI-created pack. The default and minimum UI value is `1`, so the real source `HEAD` is always preserved. The lower-level CLI still supports `--history-depth 0` for a synthetic disposable base.
 
 Packs are created with `tools/pack-for-chatgpt.sh` and stored in `chatgpt-packs/`.
 
@@ -55,7 +55,9 @@ Packs are created with `tools/pack-for-chatgpt.sh` and stored in `chatgpt-packs/
 - apply patch files with selectable PackPatch/Compatсh strategy;
 - fallback support between `git am` and `git apply`;
 - patch preview panel;
-- structured log output with `Status`, `Details`, and `Debug` verbosity filters; warnings and errors stay visible at every level.
+- structured log output with `Status`, `Details`, and `Debug` verbosity filters; warnings and errors stay visible at every level;
+- repeated Compatсh apply detection before `git am`;
+- Compatсh author normalization to the local repository Git identity after apply.
 
 ### Commit workflow
 
@@ -65,8 +67,10 @@ If `Apply commit message` is not empty, PackPatch apply creates a local commit u
 
 The UI also includes:
 
-- recent git commits panel;
-- `Undo last commit`, implemented as `git reset --mixed HEAD~1`.
+- recent git commits panel with live repository root, branch, and status;
+- optional repository-state watching;
+- `Undo last commit`, implemented as `git reset --mixed HEAD~1`;
+- optional stash after undo, including unversioned files.
 
 ### Sessions
 
@@ -76,12 +80,14 @@ A session remembers:
 
 - repository path;
 - patch directory;
-- task name;
+- pack name;
 - commit message;
 - selected files;
 - collapsed/expanded UI sections;
 - window geometry;
 - per-session log verbosity.
+
+Settings also cover pack history depth, key/certificate inclusion, unversioned-file inclusion, automatic pack creation after successful apply, apply strategy, unversioned apply safety, repository watching, stash-after-undo, and automatic deploy after commit.
 
 Session data is stored under the user config directory, for example:
 
@@ -135,7 +141,7 @@ chatgpt-packs/
 
 ### 4. Send pack to ChatGPT
 
-Upload the pack and use the PackPatch prompt:
+Upload the pack and use the canonical PackPatch/Compatсh prompt. After the universal prompt is established, request either `роби пакпатч` or `роби компатч`:
 
 [docs/packpatch-prompt.md](docs/packpatch-prompt.md)
 
@@ -155,23 +161,25 @@ Use:
 - `Patch preview` to inspect the diff;
 - `Apply latest patch` to apply it.
 
-If a commit message is present, the patch is applied and committed.
+For PackPatch, an apply commit message can create a local commit. Compatсh carries its commit message inside the patch and is applied with `git am`. Successful apply can optionally trigger pack creation and deployment.
 
 ## Safety model
 
 PackPatch UI is intentionally conservative:
 
 - packs are disposable git repositories;
-- patches are expected to be real `git diff` output;
-- `git apply --check` is available before PackPatch apply;
+- PackPatch files are expected to be real `git diff` output and can be checked with `git apply --check`;
+- Compatсh files are expected to be real `git format-patch` output and are applied with `git am`;
 - selectable apply strategies support PackPatch and Compatсh files;
-- undoing the last commit keeps changes in the working tree.
+- undoing the last commit keeps changes in the working tree unless stash-after-undo is enabled;
+- current-session cleanup removes packs, matching exported copies, and patch files only after confirmation;
+- cross-session maintenance cleanup deduplicates shared paths and preserves all session settings.
 
 The UI does not make ChatGPT the source of truth. The pack archive and your local git repository remain the source of truth.
 
 ## Related documents
 
-- [PackPatch prompt for ChatGPT](docs/packpatch-prompt.md)
+- [PackPatch and Compatсh prompts for ChatGPT](docs/packpatch-prompt.md)
 - [Pack creation utility](docs/pack-for-chatgpt-docs.md)
 - [Apply latest patch utility](docs/apply-latest-patch.md)
 

@@ -314,23 +314,56 @@ write_usage_file() {
     cat > "$pack_dir/CHATGPT_PACK_USAGE.md" <<'EOF'
 # ChatGPT disposable repository pack
 
-This archive contains a disposable git repository prepared for review or patch generation.
+This archive contains a disposable git repository prepared for review or deterministic patch generation.
 
-Expected assistant workflow:
+The user may request one of two workflows. Follow the requested mode.
 
-1. Unpack the archive.
-2. Enter `chatgpt-pack/`.
-3. Confirm baseline state with `git status`.
-4. Edit files as needed.
-5. Produce patch with `git diff --binary`.
-6. Verify patch against a clean copy with `git apply --check`.
-7. Return the patch plus sidecar metadata/checksum files.
+## Shared rules
 
-Notes:
+1. Treat this archive as the only source of truth.
+2. Work inside `chatgpt-pack/` and edit real files only.
+3. Do not reconstruct files manually or mix source from another archive.
+4. Inspect `git status` and the repository history before editing.
+5. Return exactly one `.patch` file and no metadata/checksum sidecars.
+6. Run relevant syntax or project checks when applicable.
+
+## PackPatch mode
+
+When the user says `роби пакпатч`:
+
+1. Make the requested edits.
+2. Generate the deliverable only from `git diff`.
+3. Validate it against a clean copy of this base with `git apply --check`.
+4. Return exactly one `.patch` file.
+5. Provide a one-line English passive-voice commit message and a short change summary in chat.
+
+Do not package PackPatch with `git format-patch`.
+
+## Compatсh mode
+
+When the user says `роби компатч`:
+
+1. Make the requested edits.
+2. Stage intended changes with `git add -A`.
+3. Create one real commit with a one-line English passive-voice commit message.
+4. Export exactly that commit with:
+
+   `git format-patch -1 --stdout > <patch-name>.patch`
+
+5. Validate the patch in a clean copy of this base with:
+
+   `git am --3way <patch-name>.patch`
+
+6. Verify that the `.patch` file exists and is non-empty before linking it.
+7. Return exactly one `.patch` file and summarize the change and validation in chat.
+
+Do not use `git diff` as the Compatсh deliverable.
+
+## Pack metadata
 
 - `patch.base.sha256` contains SHA256 checksums for files included in this pack.
-- `patch.meta.json` describes pack mode, source branch/head, and included files.
-- This repository is disposable. When `history_depth` is greater than 0, the preserved source commits are authoritative up to the recorded shallow depth; working tree files still reflect the selected pack mode.
+- `patch.meta.json` describes pack mode, source branch/head, history depth, and included files.
+- Preserved source commits in `.git` are authoritative up to the recorded shallow depth; working tree files reflect the selected pack mode and current source working-tree state.
 EOF
 }
 

@@ -1,135 +1,120 @@
-# PackPatch prompt for ChatGPT
+# PackPatch and Compatсh prompts for ChatGPT
 
-Use this prompt when sending a `chatgpt-pack-*.tar.gz` archive to ChatGPT and asking it to produce a patch.
+Use these rules when sending a `chatgpt-pack-*.tar.gz` archive to ChatGPT. PackPatch and Compatсh share the same archive-selection rules but produce different patch formats.
 
-The goal is to force a deterministic workflow:
-
-```text
-archive repo -> real edits -> git diff -> patch
-```
-
-## Full prompt
+## Canonical archive rules
 
 ```text
-You are working in PackPatch mode.
-
-Input:
-- I provide a `chatgpt-pack-*.tar.gz` archive.
-- The archive contains a disposable git repository.
-- This archive is the only source of truth.
-
-Task:
-- Modify the repository according to my request.
-- Produce a patch generated from the real repository state.
-
-Rules:
-1. Use only files from the provided `chatgpt-pack-*` archive.
-2. Do not use old files, cached files, or prior conversation context as source code.
-3. Do not reconstruct files manually.
-4. Work inside the unpacked disposable git repository.
-5. Make changes to real files in that repository.
-6. Produce the patch only via `git diff`.
-7. The patch must use real paths from the repository.
-8. The patch must be valid for `git apply`.
-9. Validate with `git apply --check` before returning it.
-10. Syntax-check changed files when applicable.
-11. Do not include explanations inside the patch.
-12. Do not change unrelated formatting or whitespace.
-13. If the task is unclear or the archive structure is ambiguous, say so instead of guessing.
-
-Output:
-- Provide exactly one `.patch` file.
-- Do not provide sidecar files such as `patch.base.sha256` or `patch.meta.json`.
-- Write the commit message and a short change summary in chat.
-
-Commit message format:
-- One line.
-- English.
-- Passive voice.
-
-Important:
-- Do not output a synthetic or approximate patch.
-- Do not paste a hand-written diff in chat unless file generation fails.
-- The patch must come from `git diff`.
+1. Use only uploaded archives named chatgpt-pack-*.
+2. If I explicitly name an archive, use that archive.
+3. Otherwise use the archive with the latest timestamp in its filename.
+4. If timestamps are equal, use the archive with the largest (n) suffix.
+5. The selected archive is the only source of truth.
+6. A newly provided chatgpt-pack-* archive replaces all previous working state.
+7. Unpack the archive into a disposable git repository and edit only real files there.
+8. Do not reconstruct files manually, mix archives, or use cached source files.
 ```
 
-## Short prompt
+## Universal prompt
 
-Use this when the full rule is already established in the conversation:
+Give this prompt to a new ChatGPT conversation once. After that, request either `роби пакпатч` or `роби компатч`.
 
 ```text
-Use PackPatch mode. Use only the provided `chatgpt-pack-*` archive as source of truth. Work inside the unpacked disposable git repo. Produce exactly one valid `.patch` file only via `git diff`; validate with `git apply --check`; syntax-check changed files when applicable. Write the commit message and a short change summary in chat.
+You support two deterministic workflows: PackPatch and Compatсh.
+
+Archive selection:
+- Use only uploaded archives named chatgpt-pack-*.
+- If I explicitly name an archive, use it.
+- Otherwise select the latest timestamp in the filename; if timestamps are equal, select the largest (n) suffix.
+- The selected archive is the only source of truth.
+- A new chatgpt-pack-* archive fully replaces previous working state.
+- Unpack it into a disposable git repository and modify only real files there.
+- Never reconstruct source files manually, mix archives, or use cached source code.
+
+PackPatch mode:
+- Trigger: I say "роби пакпатч".
+- Make the requested edits in the disposable repository.
+- Produce the patch only from real repository state via git diff.
+- Return exactly one .patch file and no sidecar files.
+- Validate with git apply --check against a clean disposable copy of the selected base.
+- Run relevant syntax or project checks when applicable.
+- Commit message in chat: one line, English, passive voice.
+- If I say "роби ще" without a new archive, continue from the previous PackPatch state by applying prior PackPatch files in order before producing the next git diff.
+
+Compatсh mode:
+- Trigger: I say "роби компатч".
+- Make the requested edits in the disposable repository.
+- Stage all intended changes with git add -A.
+- Create a real git commit with a one-line English passive-voice commit message.
+- Export exactly that commit with:
+  git format-patch -1 --stdout > <patch-name>.patch
+- Return exactly one .patch file and no sidecar files.
+- Do not use git diff as the Compatсh deliverable.
+- Validate the generated patch in a clean disposable copy of the selected base with:
+  git am --3way <patch-name>.patch
+- Run relevant syntax or project checks when applicable.
+- Verify the .patch file exists and is non-empty before linking it.
+- If I say "роби ще" or "роби ще компатч" without a new archive, continue from the retained Compatсh git history and create a new commit/format-patch from that state.
+- If continuation state is lost or ambiguous, ask for a new archive instead of guessing.
+
+For both modes:
+- Do not change unrelated formatting or whitespace.
+- Do not put explanations inside the patch.
+- If the task or archive state is genuinely ambiguous, say so instead of guessing.
+- In chat, provide the patch link, commit message, a short change summary, and validation results.
 ```
 
-## Continuation mode
+## PackPatch prompt
 
-For quick iterations, PackPatch can be continued without creating a new archive every time.
-
-Continuation rule:
+PackPatch is the diff workflow:
 
 ```text
-If I ask for another PackPatch and do not provide a new `chatgpt-pack-*` archive, continue from the last used pack by applying the previously generated PackPatch files in order, then produce the next patch from that updated repository state.
+archive repo -> real edits -> git diff -> git apply --check
 ```
 
-This is useful for small follow-up changes such as:
-
-- adjust wording;
-- add one button;
-- fix a small bug;
-- update docs;
-- refine UI behavior.
-
-Do not use continuation mode when:
-
-- the previous patch failed to apply;
-- conflicts were resolved manually outside ChatGPT;
-- the local repository changed in ways ChatGPT cannot see;
-- the base pack is unclear;
-- several pack archives could apply and the latest one is ambiguous.
-
-In those cases, create and upload a fresh pack.
-
-## Expected assistant behavior
-
-A correct PackPatch assistant should:
-
-1. unpack the archive;
-2. inspect the real repository paths;
-3. edit files in place;
-4. run `git diff`;
-5. verify the patch;
-6. return exactly one patch file;
-7. summarize what changed;
-8. provide the commit message in chat.
-
-## Example request
+Short prompt:
 
 ```text
-Use PackPatch mode. Add a filter field above the repository file tree.
+Use PackPatch mode. Use the canonical chatgpt-pack-* archive rules. Work only inside the selected disposable git repo. Produce exactly one .patch file only via git diff, validate it with git apply --check against a clean base, run relevant syntax checks, and provide a one-line English passive-voice commit message plus a short change summary in chat.
 ```
 
-Expected result:
+### PackPatch continuation
 
-- a downloadable `.patch` file;
-- chat message such as:
+Without a new archive, `роби ще` continues from the last PackPatch state. Rebuild that state by applying previous PackPatch files in order, then create the next diff.
+
+Do not continue when the prior patch failed, the local repository changed outside ChatGPT in a way the assistant cannot see, or the previous base is unclear. Upload a fresh pack instead.
+
+## Compatсh prompt
+
+Compatсh is the commit workflow:
 
 ```text
-Commit message: Add file tree filter
-
-What to verify:
-- Filter files... field appears above the tree.
-- Filtering by `main_window.py`, `tools/`, or `docs/` works.
-- Selected files are not lost while filtering.
+archive repo -> real edits -> git commit -> git format-patch -> git am --3way
 ```
 
-## Notes
+Short prompt:
 
-PackPatch is designed to prevent common LLM patch failures:
+```text
+Use Compatсh mode. Use the canonical chatgpt-pack-* archive rules. Work only inside the selected disposable git repo. Stage intended changes with git add -A, create one real commit with a one-line English passive-voice commit message, export exactly that commit with git format-patch -1 --stdout to one .patch file, validate it in a clean base with git am --3way, run relevant syntax checks, and verify the patch exists and is non-empty before linking it.
+```
 
-- wrong paths;
-- stale files;
-- manually fabricated diffs;
-- hidden context mixing;
-- non-applicable patches.
+### Compatсh continuation
 
-The archive is the source of truth. The patch must be a real git diff from that archive.
+Without a new archive, `роби ще` or `роби ще компатч` continues from the retained git state. The previous Compatсh commit remains in history and the next change is created as a new commit.
+
+A new `chatgpt-pack-*` archive always discards that continuation state and becomes the new base.
+
+## Expected assistant output
+
+For either mode, the chat response should contain:
+
+- one downloadable `.patch` file;
+- the exact commit message;
+- a short list of changes;
+- validation results.
+
+Compatсh must additionally verify that the generated patch file really exists and is non-empty before returning a link.
+
+## Why the modes are separate
+
+PackPatch is a minimal validated `git diff` suitable for `git apply`. Compatсh is a real git commit packaged by `git format-patch` and suitable for `git am`. Mixing their creation or validation rules makes the workflow non-deterministic.
