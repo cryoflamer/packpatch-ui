@@ -235,25 +235,6 @@ class MainWindow(QMainWindow):
         repo_row.addWidget(self.browse_button)
         repo_row.addWidget(self.refresh_button)
 
-        status_widget = QWidget(widget)
-        status_grid = QGridLayout(status_widget)
-        status_grid.setContentsMargins(0, 0, 0, 0)
-        status_grid.setHorizontalSpacing(12)
-        status_grid.setVerticalSpacing(8)
-        status_grid.addWidget(QLabel("Git root:", widget), 0, 0)
-        status_grid.addWidget(self.root_value, 0, 1)
-        status_grid.addWidget(QLabel("Branch:", widget), 1, 0)
-        status_grid.addWidget(self.branch_value, 1, 1)
-        status_grid.addWidget(QLabel("Status:", widget), 2, 0)
-        status_grid.addWidget(self.status_value, 2, 1)
-        status_grid.setColumnStretch(1, 1)
-        self.repository_status_section = CollapsibleSection(
-            "Repository status",
-            status_widget,
-            collapsed=False,
-            parent=widget,
-        )
-
         pack_controls = QHBoxLayout()
         pack_controls.addWidget(QLabel("Pack mode:", widget))
         pack_controls.addWidget(self.pack_mode_combo)
@@ -347,6 +328,20 @@ class MainWindow(QMainWindow):
         commit_history_layout = QVBoxLayout(commit_history_widget)
         commit_history_layout.setContentsMargins(0, 0, 0, 0)
         commit_history_layout.setSpacing(4)
+
+        commit_repo_summary = QGridLayout()
+        commit_repo_summary.setContentsMargins(0, 0, 0, 0)
+        commit_repo_summary.setHorizontalSpacing(8)
+        commit_repo_summary.setVerticalSpacing(2)
+        commit_repo_summary.addWidget(QLabel("Repo:", widget), 0, 0)
+        commit_repo_summary.addWidget(self.root_value, 0, 1, 1, 3)
+        commit_repo_summary.addWidget(QLabel("Branch:", widget), 1, 0)
+        commit_repo_summary.addWidget(self.branch_value, 1, 1)
+        commit_repo_summary.addWidget(QLabel("Status:", widget), 1, 2)
+        commit_repo_summary.addWidget(self.status_value, 1, 3)
+        commit_repo_summary.setColumnStretch(1, 1)
+        commit_history_layout.addLayout(commit_repo_summary)
+
         commit_history_controls = QHBoxLayout()
         commit_history_controls.addWidget(self.refresh_commits_button)
         commit_history_controls.addWidget(self.copy_commit_hash_button)
@@ -363,7 +358,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(description)
         layout.addLayout(session_row)
         layout.addLayout(repo_row)
-        layout.addWidget(self.repository_status_section)
         layout.addLayout(pack_controls)
         layout.addLayout(export_controls)
         layout.addLayout(deploy_controls)
@@ -393,7 +387,6 @@ class MainWindow(QMainWindow):
             self.repo_path_edit: "repo.path",
             self.browse_button: "repo.browse",
             self.refresh_button: "repo.refresh",
-            self.repository_status_section: "repo.status",
             self.pack_mode_combo: "pack.mode",
             self.task_name_edit: "pack.task",
             self.create_pack_button: "pack.create",
@@ -512,7 +505,6 @@ class MainWindow(QMainWindow):
         )
         self.patch_list.currentItemChanged.connect(lambda *_: self._preview_selected_patch(silent=True))
         self.file_tree.itemChanged.connect(lambda *_: self._selection_changed())
-        self.repository_status_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.packs_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.patches_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
         self.file_tree_section.toggled.connect(lambda *_: self._panel_collapsed_state_changed())
@@ -569,7 +561,6 @@ class MainWindow(QMainWindow):
             self.deploy_dir_edit.setText(session.deploy_dir)
             self.auto_deploy_after_commit_check.setChecked(session.auto_deploy_after_commit)
             self.file_filter_edit.setText(session.file_filter)
-            self.repository_status_section.set_collapsed(session.repository_status_collapsed)
             self.packs_section.set_collapsed(session.latest_packs_collapsed)
             self.patches_section.set_collapsed(session.latest_patches_collapsed)
             self.file_tree_section.set_collapsed(session.file_tree_collapsed)
@@ -666,7 +657,7 @@ class MainWindow(QMainWindow):
             latest_packs_collapsed=self.packs_section.is_collapsed(),
             latest_patches_collapsed=self.patches_section.is_collapsed(),
             patch_preview_collapsed=self.patch_preview_section.is_collapsed(),
-            repository_status_collapsed=self.repository_status_section.is_collapsed(),
+            repository_status_collapsed=True,
             file_tree_collapsed=self.file_tree_section.is_collapsed(),
             log_collapsed=self.log_section.is_collapsed(),
             git_commits_collapsed=self.git_commits_section.is_collapsed(),
@@ -792,6 +783,7 @@ class MainWindow(QMainWindow):
         self._repo_state_snapshot = snapshot
         self._repo_info = info
         self.root_value.setText(str(info.root))
+        self.root_value.setToolTip(str(info.root))
         self.branch_value.setText(info.branch or "detached HEAD")
         self.status_value.setText("dirty" if info.is_dirty else "clean")
 
@@ -885,6 +877,7 @@ class MainWindow(QMainWindow):
         self._repo_info = None
         self._repo_state_snapshot = None
         self.root_value.setText("-")
+        self.root_value.setToolTip("")
         self.branch_value.setText("-")
         self.status_value.setText("not available")
         self.file_tree.clear()
