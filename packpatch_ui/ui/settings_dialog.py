@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -17,6 +19,8 @@ from PySide6.QtWidgets import (
 
 class SettingsDialog(QDialog):
     """Expose per-session behavior settings without crowding the main window."""
+
+    clear_all_sessions_files_requested = Signal()
 
     def __init__(
         self,
@@ -60,6 +64,12 @@ class SettingsDialog(QDialog):
         deploy_layout = QVBoxLayout(deploy_group)
         deploy_layout.addWidget(auto_deploy_after_commit_check)
 
+        maintenance_group = QGroupBox("Maintenance", self)
+        maintenance_layout = QVBoxLayout(maintenance_group)
+        self.clear_all_sessions_files_button = QPushButton("Clear files for all sessions...", maintenance_group)
+        self.clear_all_sessions_files_button.clicked.connect(self.clear_all_sessions_files_requested.emit)
+        maintenance_layout.addWidget(self.clear_all_sessions_files_button)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, parent=self)
         buttons.rejected.connect(self.close)
 
@@ -68,6 +78,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(apply_group)
         layout.addWidget(repository_group)
         layout.addWidget(deploy_group)
+        layout.addWidget(maintenance_group)
         layout.addWidget(buttons)
 
     def show_settings(self) -> None:

@@ -39,6 +39,7 @@ from packpatch_ui.core.deploy_runner import deploy_repo
 from packpatch_ui.core.git_repo import (
     GitRepoInfo,
     GitRepoStateSnapshot,
+    find_git_root,
     list_changed_files,
     list_recent_commits,
     list_repo_files,
@@ -391,6 +392,7 @@ class MainWindow(QMainWindow):
             self.save_session_as_button: "session.save_as",
             self.delete_session_button: "session.delete",
             self.settings_button: "settings.open",
+            self.settings_dialog.clear_all_sessions_files_button: "settings.clear_all_sessions_files",
             self.clear_session_files_button: "artifacts.clear_session",
             self.repo_path_edit: "repo.path",
             self.browse_button: "repo.browse",
@@ -464,6 +466,7 @@ class MainWindow(QMainWindow):
         self.save_session_as_button.clicked.connect(self._save_session_as)
         self.delete_session_button.clicked.connect(self._delete_current_session)
         self.settings_button.clicked.connect(self.settings_dialog.show_settings)
+        self.settings_dialog.clear_all_sessions_files_requested.connect(self._clear_all_sessions_files)
         self._autosave_timer.timeout.connect(self._autosave_current_session)
         self._repository_watch_timer.timeout.connect(self._poll_repository_state)
 
@@ -1300,6 +1303,93 @@ class MainWindow(QMainWindow):
             if isinstance(path_value, str) and path_value:
                 paths.append(Path(path_value).expanduser())
         return paths
+
+    def _clear_all_sessions_files(self) -> None:
+        self._session_store.upsert_session(
+            self._current_session_snapshot(self._current_session_name),
+            make_active=True,
+        )
+        sessions = self._session_store.load_sessions()
+
+        packs: set[Path] = set()
+        exported_packs: set[Path] = set()
+        patches: set[Path] = set()
+        for session in sessions:
+            if session.repo_path:
+                repo_path = Path(session.repo_path).expanduser()
+                if repo_path.is_dir():
+                    root = find_git_root(repo_path)
+                    if root is not None:
+                        packs.update(item.path for item in list_pack_archives(root))
+
+            if session.export_dir:
+                export_dir = Path(session.export_dir).expanduser()
+                if export_dir.is_dir():
+                    exported_packs.update(
+                        path for path in export_dir.glob("chatgpt-pack-*.tar.gz") if path.is_file()
+                    )
+
+            if session.patch_dir:
+                patch_dir = Path(session.patch_dir).expanduser()
+                patches.update(item.path for item in list_patch_files(patch_dir))
+
+        response = QMessageBox.question(
+            self.settings_dialog,
+            "Clear files for all sessions",
+            (
+                "Clear pack archives and patch files for all saved sessions?\n\n"
+                f"Sessions: {len(sessions)}\n"
+                f"Pack files: {len(packs)}\n"
+                f"Exported pack copies: {len(exported_packs)}\n"
+                f"Patch files: {len(patches)}\n\n"
+                "Session settings will be preserved."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            self._append_log("[cleanup] all-session file cleanup cancelled")
+            self.statusBar().showMessage("All-session file cleanup cancelled")
+            return
+
+        deleted_packs = 0
+        deleted_exported = 0
+        deleted_patches = 0
+        failed: list[str] = []
+
+        for path in sorted(packs):
+            try:
+                if delete_artifact(path):
+                    deleted_packs += 1
+            except (OSError, ValueError) as error:
+                failed.append(f"{path}: {error}")
+
+        for path in sorted(exported_packs):
+            try:
+                if delete_artifact(path):
+                    deleted_exported += 1
+            except (OSError, ValueError) as error:
+                failed.append(f"{path}: {error}")
+
+        for path in sorted(patches):
+            try:
+                if delete_artifact(path):
+                    deleted_patches += 1
+            except (OSError, ValueError) as error:
+                failed.append(f"{path}: {error}")
+
+        self.patch_preview.clear()
+        self._refresh_artifact_lists()
+        self._append_log(f"[cleanup] all saved sessions processed: {len(sessions)}")
+        self._append_log(f"[cleanup] packs deleted: {deleted_packs}")
+        self._append_log(f"[cleanup] exported pack copies deleted: {deleted_exported}")
+        self._append_log(f"[cleanup] patches deleted: {deleted_patches}")
+        if failed:
+            failed_preview = "\n".join(f"  {item}" for item in failed)
+            self._append_log(f"[cleanup] failed to delete some files:\n{failed_preview}")
+            self.statusBar().showMessage("All-session files cleared with errors")
+        else:
+            self.statusBar().showMessage("All-session files cleared")
 
     def _clear_session_files(self) -> None:
         if self._repo_info is None:

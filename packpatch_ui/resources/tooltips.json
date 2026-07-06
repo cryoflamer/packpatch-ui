@@ -54,5 +54,6 @@
   "pack.auto_create_after_apply": "Automatically run the existing Create pack flow after a patch applies new changes successfully. Dry-run and already-applied patches do not trigger pack creation. This setting is saved per session/repository workflow.",
   "repo.watch_state": "Watch the selected git repository at runtime and refresh branch, HEAD, clean/dirty status, repository files, and commit history when external git state changes. This setting is saved per session/repository workflow.",
   "pack.include_unversioned": "Include non-ignored unversioned files in created packs. Disabled by default because these files are usually local or temporary. The legacy full + untracked pack mode still includes them explicitly.",
-  "pack.history_depth": "Number of real source git commits to preserve in every created pack. The minimum and default is 1, so packs always keep the real source HEAD instead of a synthetic base. Larger values include more commit history and may expose older code, messages, or authorship data."
+  "pack.history_depth": "Number of real source git commits to preserve in every created pack. The minimum and default is 1, so packs always keep the real source HEAD instead of a synthetic base. Larger values include more commit history and may expose older code, messages, or authorship data.",
+  "settings.clear_all_sessions_files": "Delete PackPatch pack archives, exported pack copies, and patch files referenced by all saved sessions. Duplicate directories are handled once and session settings are preserved."
 }
