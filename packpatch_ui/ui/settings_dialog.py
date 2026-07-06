@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -23,6 +24,7 @@ class SettingsDialog(QDialog):
         auto_export_pack_check: QCheckBox,
         include_sensitive_files_check: QCheckBox,
         include_unversioned_files_check: QCheckBox,
+        git_history_depth_spin: QSpinBox,
         auto_create_pack_after_apply_check: QCheckBox,
         apply_mode_combo: QComboBox,
         allow_unversioned_apply_check: QCheckBox,
@@ -37,11 +39,12 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(460)
 
         pack_group = QGroupBox("Pack", self)
-        pack_layout = QVBoxLayout(pack_group)
-        pack_layout.addWidget(auto_export_pack_check)
-        pack_layout.addWidget(include_sensitive_files_check)
-        pack_layout.addWidget(include_unversioned_files_check)
-        pack_layout.addWidget(auto_create_pack_after_apply_check)
+        pack_layout = QFormLayout(pack_group)
+        pack_layout.addRow(auto_export_pack_check)
+        pack_layout.addRow(include_sensitive_files_check)
+        pack_layout.addRow(include_unversioned_files_check)
+        pack_layout.addRow("Git history depth:", git_history_depth_spin)
+        pack_layout.addRow(auto_create_pack_after_apply_check)
 
         apply_group = QGroupBox("Apply", self)
         apply_layout = QFormLayout(apply_group)

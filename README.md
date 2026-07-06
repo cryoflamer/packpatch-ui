@@ -31,10 +31,11 @@ For the prompt that should be given to ChatGPT, see [docs/packpatch-prompt.md](d
 Supported pack modes:
 
 - `slice` — selected files only;
-- `changed` — modified, staged, and untracked non-ignored files;
+- `changed` — modified and staged tracked files, with unversioned files included only when enabled;
 - `full` — tracked project files;
-- `full + untracked` — tracked files plus untracked non-ignored files;
-- `history (depth 50)` — shallow history pack for log/blame/debugging cases.
+- `full + untracked` — tracked files plus untracked non-ignored files.
+
+`Git history depth` in Settings controls how many real source commits are preserved in every pack mode. The default is `1`; `0` uses a synthetic disposable base with no source history.
 
 Packs are created with `tools/pack-for-chatgpt.sh` and stored in `chatgpt-packs/`.
 
@@ -123,7 +124,7 @@ Use the file tree, filter, directory checkboxes, or `Select changed`.
 
 ### 3. Create a pack
 
-Choose `Pack mode`, set or accept a task name, then click `Create pack`.
+Choose `Pack mode`, set or accept the pack name, configure `Git history depth` in Settings if needed, then click `Create pack`.
 
 The archive appears in:
 

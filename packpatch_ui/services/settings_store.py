@@ -31,6 +31,7 @@ class AppSession:
     auto_export_pack: bool = False
     include_sensitive_files: bool = False
     include_unversioned_files: bool = False
+    git_history_depth: int = 1
     auto_create_pack_after_apply: bool = False
     export_dir: str = ""
     deploy_dir: str = ""
@@ -68,6 +69,7 @@ class AppSession:
             auto_export_pack=bool(data.get("auto_export_pack", False)),
             include_sensitive_files=bool(data.get("include_sensitive_files", False)),
             include_unversioned_files=bool(data.get("include_unversioned_files", False)),
+            git_history_depth=max(0, int(data.get("git_history_depth", 1) or 0)),
             auto_create_pack_after_apply=bool(data.get("auto_create_pack_after_apply", False)),
             export_dir=str(data.get("export_dir") or ""),
             deploy_dir=str(data.get("deploy_dir") or ""),

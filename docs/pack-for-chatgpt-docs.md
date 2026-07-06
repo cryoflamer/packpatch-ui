@@ -17,15 +17,15 @@
 ### full
 
 Створює репозиторій з усіма tracked файлами.\
-Опція `--include-untracked` додає untracked файли.
+Опція `--include-untracked` додає untracked файли. Опція `--history-depth N` зберігає N реальних комітів вихідного репозиторію; `0` використовує synthetic base без вихідної історії.
 
 ### slice
 
-Створює репозиторій лише з вибраними файлами або директоріями.
+Створює репозиторій лише з вибраними файлами або директоріями у working tree. Опція `--history-depth N` керує глибиною збереженої git-історії.
 
 ### changed
 
-Пакує лише змінені та нові файли.
+Пакує змінені tracked-файли, а untracked додає лише з `--include-untracked`. Опція `--history-depth N` керує глибиною збереженої git-історії.
 
 ### history
 
@@ -35,9 +35,9 @@
 
 ## Приклади
 
-    ./pack-for-chatgpt.sh full overview
-    ./pack-for-chatgpt.sh slice fix-bug src/app.py
-    ./pack-for-chatgpt.sh changed review
+    ./pack-for-chatgpt.sh full overview --history-depth 1
+    ./pack-for-chatgpt.sh slice fix-bug --history-depth 1 src/app.py
+    ./pack-for-chatgpt.sh changed review --history-depth 1
     ./pack-for-chatgpt.sh history investigate --depth 50
 
 ------------------------------------------------------------------------

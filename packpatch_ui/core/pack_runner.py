@@ -45,7 +45,6 @@ PACK_MODE_DEFAULT_TASKS = {
     "changed": "changed",
     "full": "overview",
     "full-untracked": "overview",
-    "history-depth-50": "history",
 }
 
 PACK_MODE_LABELS = {
@@ -53,7 +52,6 @@ PACK_MODE_LABELS = {
     "changed": "changed",
     "full": "full",
     "full-untracked": "full + untracked",
-    "history-depth-50": "history (depth 50)",
 }
 
 
@@ -70,6 +68,7 @@ def create_pack(
     *,
     include_sensitive: bool = False,
     include_unversioned: bool = False,
+    history_depth: int = 1,
 ) -> PackResult:
     """Create a PackPatch archive for *mode* inside *repo_root*."""
     cleaned_task = task_name.strip() or default_task_name_for_mode(mode)
@@ -80,20 +79,19 @@ def create_pack(
 
     sensitive_args = ["--include-sensitive"] if include_sensitive else []
     unversioned_args = ["--include-untracked"] if include_unversioned else []
+    history_args = ["--history-depth", str(max(0, history_depth))]
 
     if mode == "slice":
         files = [path.strip() for path in selected_files if path.strip()]
         if not files:
             raise ValueError("Select at least one file for slice pack creation.")
-        command = ["bash", str(script), "slice", cleaned_task, *unversioned_args, *sensitive_args, *files]
+        command = ["bash", str(script), "slice", cleaned_task, *history_args, *unversioned_args, *sensitive_args, *files]
     elif mode == "changed":
-        command = ["bash", str(script), "changed", cleaned_task, *unversioned_args, *sensitive_args]
+        command = ["bash", str(script), "changed", cleaned_task, *history_args, *unversioned_args, *sensitive_args]
     elif mode == "full":
-        command = ["bash", str(script), "full", cleaned_task, *unversioned_args, *sensitive_args]
+        command = ["bash", str(script), "full", cleaned_task, *history_args, *unversioned_args, *sensitive_args]
     elif mode == "full-untracked":
-        command = ["bash", str(script), "full", cleaned_task, "--include-untracked", *sensitive_args]
-    elif mode == "history-depth-50":
-        command = ["bash", str(script), "history", cleaned_task, "--depth", "50"]
+        command = ["bash", str(script), "full", cleaned_task, *history_args, "--include-untracked", *sensitive_args]
     else:
         raise ValueError(f"Unsupported pack mode: {mode}")
 

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QStatusBar,
     QTextEdit,
     QVBoxLayout,
@@ -103,6 +104,10 @@ class MainWindow(QMainWindow):
         self.auto_export_pack_check = QCheckBox("Auto export pack", self)
         self.include_sensitive_files_check = QCheckBox("Include keys/certs", self)
         self.include_unversioned_files_check = QCheckBox("Include unversioned files", self)
+        self.git_history_depth_spin = QSpinBox(self)
+        self.git_history_depth_spin.setRange(0, 10000)
+        self.git_history_depth_spin.setValue(1)
+        self.git_history_depth_spin.setSpecialValueText("0 (no history)")
         self.auto_create_pack_after_apply_check = QCheckBox("Create pack after successful apply", self)
         self.export_dir_edit = QLineEdit(self)
         self.export_dir_edit.setPlaceholderText("Export directory for created packs")
@@ -143,6 +148,7 @@ class MainWindow(QMainWindow):
             auto_export_pack_check=self.auto_export_pack_check,
             include_sensitive_files_check=self.include_sensitive_files_check,
             include_unversioned_files_check=self.include_unversioned_files_check,
+            git_history_depth_spin=self.git_history_depth_spin,
             auto_create_pack_after_apply_check=self.auto_create_pack_after_apply_check,
             apply_mode_combo=self.apply_mode_combo,
             allow_unversioned_apply_check=self.allow_unversioned_apply_check,
@@ -393,6 +399,7 @@ class MainWindow(QMainWindow):
             self.auto_export_pack_check: "pack.auto_export",
             self.include_sensitive_files_check: "pack.include_sensitive",
             self.include_unversioned_files_check: "pack.include_unversioned",
+            self.git_history_depth_spin: "pack.history_depth",
             self.auto_create_pack_after_apply_check: "pack.auto_create_after_apply",
             self.export_dir_edit: "pack.export_dir",
             self.browse_export_dir_button: "pack.browse_export",
@@ -471,6 +478,7 @@ class MainWindow(QMainWindow):
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.include_sensitive_files_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.include_unversioned_files_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.git_history_depth_spin.valueChanged.connect(lambda *_: self._schedule_autosave())
         self.auto_create_pack_after_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.browse_export_dir_button.clicked.connect(self._browse_export_directory)
@@ -556,6 +564,7 @@ class MainWindow(QMainWindow):
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
             self.include_unversioned_files_check.setChecked(session.include_unversioned_files)
+            self.git_history_depth_spin.setValue(session.git_history_depth)
             self.auto_create_pack_after_apply_check.setChecked(session.auto_create_pack_after_apply)
             self.export_dir_edit.setText(session.export_dir)
             self.deploy_dir_edit.setText(session.deploy_dir)
@@ -647,6 +656,7 @@ class MainWindow(QMainWindow):
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
             include_unversioned_files=self.include_unversioned_files_check.isChecked(),
+            git_history_depth=self.git_history_depth_spin.value(),
             auto_create_pack_after_apply=self.auto_create_pack_after_apply_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
             deploy_dir=self.deploy_dir_edit.text().strip(),
@@ -1045,6 +1055,12 @@ class MainWindow(QMainWindow):
         task_name = self._ensure_task_name_for_mode(mode)
 
         self._append_log(f"Creating pack with mode: {PACK_MODE_LABELS.get(mode, mode)}...")
+        history_depth = self.git_history_depth_spin.value()
+        self._append_log(f"Pack git history depth: {history_depth}.")
+        if history_depth > 0:
+            self._append_log(
+                "Pack git history is enabled; preserved commits may contain files outside the selected pack mode."
+            )
         if self.include_sensitive_files_check.isChecked():
             self._append_log("Pack sensitive files: including tracked keys/certificates.")
         else:
@@ -1061,6 +1077,7 @@ class MainWindow(QMainWindow):
                 selected_files,
                 include_sensitive=self.include_sensitive_files_check.isChecked(),
                 include_unversioned=self.include_unversioned_files_check.isChecked(),
+                history_depth=self.git_history_depth_spin.value(),
             )
         except (FileNotFoundError, ValueError) as error:
             self._append_log(f"Cannot create pack: {error}")

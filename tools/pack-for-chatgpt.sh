@@ -6,13 +6,13 @@ set -euo pipefail
 # Creates disposable git repositories for ChatGPT patch/review workflows.
 #
 # Modes:
-#   full    <task-name> [--include-untracked]
-#   slice   <task-name> [--include-untracked] <file-or-dir>...
-#   changed <task-name> [--include-untracked]
+#   full    <task-name> [--history-depth N] [--include-untracked]
+#   slice   <task-name> [--history-depth N] [--include-untracked] <file-or-dir>...
+#   changed <task-name> [--history-depth N] [--include-untracked]
 #   history <task-name> [--depth N | --full-history]
 #
 # Examples:
-#   ./pack-for-chatgpt.sh full overview
+#   ./pack-for-chatgpt.sh full overview --history-depth 1
 #   ./pack-for-chatgpt.sh slice fix-phase-ui src/wedge/ui.py etc/config.yaml
 #   ./pack-for-chatgpt.sh slice docs-task docs/ src/wedge/
 #   ./pack-for-chatgpt.sh changed review-local-edits
@@ -41,26 +41,29 @@ cleanup_tmp_parent() {
 usage() {
     cat <<'EOF'
 Usage:
-  pack-for-chatgpt.sh full    <task-name> [--include-untracked] [--include-sensitive]
-  pack-for-chatgpt.sh slice   <task-name> [--include-untracked] [--include-sensitive] <file-or-dir>...
-  pack-for-chatgpt.sh changed <task-name> [--include-untracked] [--include-sensitive]
+  pack-for-chatgpt.sh full    <task-name> [--history-depth N] [--include-untracked] [--include-sensitive]
+  pack-for-chatgpt.sh slice   <task-name> [--history-depth N] [--include-untracked] [--include-sensitive] <file-or-dir>...
+  pack-for-chatgpt.sh changed <task-name> [--history-depth N] [--include-untracked] [--include-sensitive]
   pack-for-chatgpt.sh history <task-name> [--depth N | --full-history]
 
 Modes:
   full
-    Creates a fresh disposable git repo with all tracked files.
+    Creates a disposable repo with all tracked files.
+    --history-depth N preserves N real source commits; 0 uses a synthetic base.
     With --include-untracked, also includes untracked non-ignored files.
     With --include-sensitive, also includes tracked keys/certificates that are excluded by default.
 
   slice
-    Creates a fresh disposable git repo with only selected files/directories.
+    Creates a disposable repo with only selected files/directories in the working tree.
+    --history-depth N preserves N real source commits; 0 uses a synthetic base.
     Paths are preserved relative to the project root.
     By default only tracked files are eligible. With --include-untracked,
     selected untracked non-ignored files are eligible too. Raw find is not used,
     so caches/build outputs are not accidentally packed.
 
   changed
-    Creates a fresh disposable git repo with changed tracked files.
+    Creates a disposable repo with changed tracked files in the working tree.
+    --history-depth N preserves N real source commits; 0 uses a synthetic base.
     With --include-untracked, also includes untracked non-ignored files.
 
   history
@@ -327,7 +330,7 @@ Notes:
 
 - `patch.base.sha256` contains SHA256 checksums for files included in this pack.
 - `patch.meta.json` describes pack mode, source branch/head, and included files.
-- This repository is disposable. Do not treat its `.git` history as authoritative unless mode is `history`.
+- This repository is disposable. When `history_depth` is greater than 0, the preserved source commits are authoritative up to the recorded shallow depth; working tree files still reflect the selected pack mode.
 EOF
 }
 
@@ -418,6 +421,63 @@ init_disposable_repo() {
     git -C "$pack_dir" config user.email "chatgpt-pack@example.invalid"
     git -C "$pack_dir" add .
     git -C "$pack_dir" commit -q -m "base"
+}
+
+copy_git_identity() {
+    local source_root="$1"
+    local pack_dir="$2"
+    local user_name
+    local user_email
+
+    user_name="$(git -C "$source_root" config user.name || true)"
+    user_email="$(git -C "$source_root" config user.email || true)"
+
+    if [[ -n "$user_name" ]]; then
+        git -C "$pack_dir" config user.name "$user_name"
+    fi
+    if [[ -n "$user_email" ]]; then
+        git -C "$pack_dir" config user.email "$user_email"
+    fi
+}
+
+prepare_pack_repo() {
+    local source_root="$1"
+    local pack_dir="$2"
+    local mode="$3"
+    local history_depth="$4"
+    local tmp_parent="$5"
+
+    if [[ "$history_depth" == "0" ]]; then
+        init_disposable_repo "$pack_dir"
+        return
+    fi
+
+    local snapshot_dir="$tmp_parent/pack-snapshot"
+    mv "$pack_dir" "$snapshot_dir"
+    git clone -q --depth "$history_depth" "file://$source_root" "$pack_dir"
+
+    if [[ "$mode" != "full" ]]; then
+        git -C "$pack_dir" sparse-checkout init --no-cone
+        (
+            cd "$snapshot_dir"
+            find . -type f \
+                ! -name 'CHATGPT_PACK_USAGE.md' \
+                ! -name 'patch.base.sha256' \
+                ! -name 'patch.meta.json' \
+                -printf '/%P\n' \
+            | sort
+        ) | git -C "$pack_dir" sparse-checkout set --no-cone --stdin
+    fi
+
+    find "$pack_dir" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf -- {} +
+    cp -a "$snapshot_dir"/. "$pack_dir"/
+
+    cat >> "$pack_dir/.git/info/exclude" <<'EOF'
+/CHATGPT_PACK_USAGE.md
+/patch.base.sha256
+/patch.meta.json
+EOF
+    copy_git_identity "$source_root" "$pack_dir"
 }
 
 next_counter() {
@@ -515,8 +575,9 @@ pack_full() {
     local task="$2"
     local include_untracked="$3"
     local include_sensitive="$4"
-    local tmp_parent="$5"
-    local out_dir="$6"
+    local history_depth="$5"
+    local tmp_parent="$6"
+    local out_dir="$7"
 
     local pack_dir
     pack_dir="$(create_clean_pack_dir "$tmp_parent")"
@@ -536,8 +597,8 @@ pack_full() {
 
     write_usage_file "$pack_dir"
     write_sha256_manifest "$pack_dir"
-    write_meta_json "$pack_dir" "full" "$task" "$root" "$count"
-    init_disposable_repo "$pack_dir"
+    write_meta_json "$pack_dir" "full" "$task" "$root" "$count" "$history_depth"
+    prepare_pack_repo "$root" "$pack_dir" "full" "$history_depth" "$tmp_parent"
 
     local archive
     archive="$(make_archive_name "$out_dir" "full" "$task" "$pack_dir")"
@@ -550,9 +611,10 @@ pack_slice() {
     local task="$2"
     local include_sensitive="$3"
     local include_untracked="$4"
-    local tmp_parent="$5"
-    local out_dir="$6"
-    shift 6
+    local history_depth="$5"
+    local tmp_parent="$6"
+    local out_dir="$7"
+    shift 7
 
     [[ "$#" -gt 0 ]] || die "slice mode requires at least one path"
 
@@ -575,8 +637,8 @@ pack_slice() {
 
     write_usage_file "$pack_dir"
     write_sha256_manifest "$pack_dir"
-    write_meta_json "$pack_dir" "slice" "$task" "$root" "$count"
-    init_disposable_repo "$pack_dir"
+    write_meta_json "$pack_dir" "slice" "$task" "$root" "$count" "$history_depth"
+    prepare_pack_repo "$root" "$pack_dir" "slice" "$history_depth" "$tmp_parent"
 
     local archive
     archive="$(make_archive_name "$out_dir" "slice" "$task" "$pack_dir")"
@@ -589,8 +651,9 @@ pack_changed() {
     local task="$2"
     local include_sensitive="$3"
     local include_untracked="$4"
-    local tmp_parent="$5"
-    local out_dir="$6"
+    local history_depth="$5"
+    local tmp_parent="$6"
+    local out_dir="$7"
 
     local pack_dir
     pack_dir="$(create_clean_pack_dir "$tmp_parent")"
@@ -602,8 +665,8 @@ pack_changed() {
 
     write_usage_file "$pack_dir"
     write_sha256_manifest "$pack_dir"
-    write_meta_json "$pack_dir" "changed" "$task" "$root" "$count"
-    init_disposable_repo "$pack_dir"
+    write_meta_json "$pack_dir" "changed" "$task" "$root" "$count" "$history_depth"
+    prepare_pack_repo "$root" "$pack_dir" "changed" "$history_depth" "$tmp_parent"
 
     local archive
     archive="$(make_archive_name "$out_dir" "changed" "$task" "$pack_dir")"
@@ -699,42 +762,60 @@ main() {
         full)
             local include_untracked="0"
             local include_sensitive="0"
+            local history_depth="0"
             while [[ "$#" -gt 0 ]]; do
                 case "$1" in
                     --include-untracked) include_untracked="1" ;;
                     --include-sensitive) include_sensitive="1" ;;
+                    --history-depth)
+                        shift
+                        [[ "${1:-}" =~ ^[0-9]+$ ]] || die "--history-depth requires a non-negative number"
+                        history_depth="$1"
+                        ;;
                     *) die "unknown full option: $1" ;;
                 esac
                 shift
             done
-            pack_full "$root" "$task" "$include_untracked" "$include_sensitive" "$PACKPATCH_TMP_PARENT" "$out_dir"
+            pack_full "$root" "$task" "$include_untracked" "$include_sensitive" "$history_depth" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         slice)
             local include_sensitive="0"
             local include_untracked="0"
+            local history_depth="0"
             local slice_paths=()
             while [[ "$#" -gt 0 ]]; do
                 case "$1" in
                     --include-sensitive) include_sensitive="1" ;;
                     --include-untracked) include_untracked="1" ;;
+                    --history-depth)
+                        shift
+                        [[ "${1:-}" =~ ^[0-9]+$ ]] || die "--history-depth requires a non-negative number"
+                        history_depth="$1"
+                        ;;
                     *) slice_paths+=("$1") ;;
                 esac
                 shift
             done
-            pack_slice "$root" "$task" "$include_sensitive" "$include_untracked" "$PACKPATCH_TMP_PARENT" "$out_dir" "${slice_paths[@]}"
+            pack_slice "$root" "$task" "$include_sensitive" "$include_untracked" "$history_depth" "$PACKPATCH_TMP_PARENT" "$out_dir" "${slice_paths[@]}"
             ;;
         changed)
             local include_sensitive="0"
             local include_untracked="0"
+            local history_depth="0"
             while [[ "$#" -gt 0 ]]; do
                 case "$1" in
                     --include-sensitive) include_sensitive="1" ;;
                     --include-untracked) include_untracked="1" ;;
+                    --history-depth)
+                        shift
+                        [[ "${1:-}" =~ ^[0-9]+$ ]] || die "--history-depth requires a non-negative number"
+                        history_depth="$1"
+                        ;;
                     *) die "unknown changed option: $1" ;;
                 esac
                 shift
             done
-            pack_changed "$root" "$task" "$include_sensitive" "$include_untracked" "$PACKPATCH_TMP_PARENT" "$out_dir"
+            pack_changed "$root" "$task" "$include_sensitive" "$include_untracked" "$history_depth" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         history)
             local depth="50"
