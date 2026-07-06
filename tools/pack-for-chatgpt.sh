@@ -7,8 +7,8 @@ set -euo pipefail
 #
 # Modes:
 #   full    <task-name> [--include-untracked]
-#   slice   <task-name> <file-or-dir>...
-#   changed <task-name>
+#   slice   <task-name> [--include-untracked] <file-or-dir>...
+#   changed <task-name> [--include-untracked]
 #   history <task-name> [--depth N | --full-history]
 #
 # Examples:
@@ -42,8 +42,8 @@ usage() {
     cat <<'EOF'
 Usage:
   pack-for-chatgpt.sh full    <task-name> [--include-untracked] [--include-sensitive]
-  pack-for-chatgpt.sh slice   <task-name> <file-or-dir>...
-  pack-for-chatgpt.sh changed <task-name>
+  pack-for-chatgpt.sh slice   <task-name> [--include-untracked] [--include-sensitive] <file-or-dir>...
+  pack-for-chatgpt.sh changed <task-name> [--include-untracked] [--include-sensitive]
   pack-for-chatgpt.sh history <task-name> [--depth N | --full-history]
 
 Modes:
@@ -55,12 +55,13 @@ Modes:
   slice
     Creates a fresh disposable git repo with only selected files/directories.
     Paths are preserved relative to the project root.
-    Directories are collected through git tracked/untracked-non-ignored files,
-    not raw find, so caches/build outputs are not accidentally packed.
+    By default only tracked files are eligible. With --include-untracked,
+    selected untracked non-ignored files are eligible too. Raw find is not used,
+    so caches/build outputs are not accidentally packed.
 
   changed
-    Creates a fresh disposable git repo with changed tracked files plus
-    untracked non-ignored files.
+    Creates a fresh disposable git repo with changed tracked files.
+    With --include-untracked, also includes untracked non-ignored files.
 
   history
     Creates a shallow clone with real git history and working tree diff.
@@ -77,7 +78,9 @@ Examples:
   ./pack-for-chatgpt.sh full overview --include-sensitive
   ./pack-for-chatgpt.sh slice fix-ui src/app.py docs/SPEC.md
   ./pack-for-chatgpt.sh slice docs-review docs/
+  ./pack-for-chatgpt.sh slice docs-review --include-untracked docs/
   ./pack-for-chatgpt.sh changed review-edits
+  ./pack-for-chatgpt.sh changed review-edits --include-untracked
   ./pack-for-chatgpt.sh history investigate --depth 50
 EOF
 }
@@ -222,17 +225,23 @@ collect_untracked_files() {
 }
 
 collect_changed_files() {
+    local include_untracked="${1:-0}"
     {
         git diff --name-only -z HEAD
         git diff --name-only -z --cached HEAD
-        git ls-files --others --exclude-standard -z
+        if [[ "$include_untracked" == "1" ]]; then
+            git ls-files --others --exclude-standard -z
+        fi
     } | awk -v RS='\0' -v ORS='\0' 'NF && !seen[$0]++ { print }'
 }
 
 collect_git_known_files() {
+    local include_untracked="${1:-0}"
     {
         git ls-files -z
-        git ls-files --others --exclude-standard -z
+        if [[ "$include_untracked" == "1" ]]; then
+            git ls-files --others --exclude-standard -z
+        fi
     } | awk -v RS='\0' -v ORS='\0' 'NF && !seen[$0]++ { print }'
 }
 
@@ -540,9 +549,10 @@ pack_slice() {
     local root="$1"
     local task="$2"
     local include_sensitive="$3"
-    local tmp_parent="$4"
-    local out_dir="$5"
-    shift 5
+    local include_untracked="$4"
+    local tmp_parent="$5"
+    local out_dir="$6"
+    shift 6
 
     [[ "$#" -gt 0 ]] || die "slice mode requires at least one path"
 
@@ -550,7 +560,7 @@ pack_slice() {
     pack_dir="$(create_clean_pack_dir "$tmp_parent")"
 
     local tmp_list="$tmp_parent/git-known-files.nul"
-    collect_git_known_files > "$tmp_list"
+    collect_git_known_files "$include_untracked" > "$tmp_list"
 
     local count=0
     local c
@@ -578,16 +588,17 @@ pack_changed() {
     local root="$1"
     local task="$2"
     local include_sensitive="$3"
-    local tmp_parent="$4"
-    local out_dir="$5"
+    local include_untracked="$4"
+    local tmp_parent="$5"
+    local out_dir="$6"
 
     local pack_dir
     pack_dir="$(create_clean_pack_dir "$tmp_parent")"
 
     local count
-    count="$(collect_changed_files | copy_paths_from_nul_stream "$root" "$pack_dir" "$include_sensitive")"
+    count="$(collect_changed_files "$include_untracked" | copy_paths_from_nul_stream "$root" "$pack_dir" "$include_sensitive")"
 
-    [[ "$count" -gt 0 ]] || die "no changed or untracked files to pack"
+    [[ "$count" -gt 0 ]] || die "no changed files to pack"
 
     write_usage_file "$pack_dir"
     write_sha256_manifest "$pack_dir"
@@ -700,26 +711,30 @@ main() {
             ;;
         slice)
             local include_sensitive="0"
+            local include_untracked="0"
             local slice_paths=()
             while [[ "$#" -gt 0 ]]; do
                 case "$1" in
                     --include-sensitive) include_sensitive="1" ;;
+                    --include-untracked) include_untracked="1" ;;
                     *) slice_paths+=("$1") ;;
                 esac
                 shift
             done
-            pack_slice "$root" "$task" "$include_sensitive" "$PACKPATCH_TMP_PARENT" "$out_dir" "${slice_paths[@]}"
+            pack_slice "$root" "$task" "$include_sensitive" "$include_untracked" "$PACKPATCH_TMP_PARENT" "$out_dir" "${slice_paths[@]}"
             ;;
         changed)
             local include_sensitive="0"
+            local include_untracked="0"
             while [[ "$#" -gt 0 ]]; do
                 case "$1" in
                     --include-sensitive) include_sensitive="1" ;;
+                    --include-untracked) include_untracked="1" ;;
                     *) die "unknown changed option: $1" ;;
                 esac
                 shift
             done
-            pack_changed "$root" "$task" "$include_sensitive" "$PACKPATCH_TMP_PARENT" "$out_dir"
+            pack_changed "$root" "$task" "$include_sensitive" "$include_untracked" "$PACKPATCH_TMP_PARENT" "$out_dir"
             ;;
         history)
             local depth="50"

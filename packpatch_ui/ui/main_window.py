@@ -102,6 +102,7 @@ class MainWindow(QMainWindow):
 
         self.auto_export_pack_check = QCheckBox("Auto export pack", self)
         self.include_sensitive_files_check = QCheckBox("Include keys/certs", self)
+        self.include_unversioned_files_check = QCheckBox("Include unversioned files", self)
         self.auto_create_pack_after_apply_check = QCheckBox("Create pack after successful apply", self)
         self.export_dir_edit = QLineEdit(self)
         self.export_dir_edit.setPlaceholderText("Export directory for created packs")
@@ -141,6 +142,7 @@ class MainWindow(QMainWindow):
         self.settings_dialog = SettingsDialog(
             auto_export_pack_check=self.auto_export_pack_check,
             include_sensitive_files_check=self.include_sensitive_files_check,
+            include_unversioned_files_check=self.include_unversioned_files_check,
             auto_create_pack_after_apply_check=self.auto_create_pack_after_apply_check,
             apply_mode_combo=self.apply_mode_combo,
             allow_unversioned_apply_check=self.allow_unversioned_apply_check,
@@ -397,6 +399,7 @@ class MainWindow(QMainWindow):
             self.create_pack_button: "pack.create",
             self.auto_export_pack_check: "pack.auto_export",
             self.include_sensitive_files_check: "pack.include_sensitive",
+            self.include_unversioned_files_check: "pack.include_unversioned",
             self.auto_create_pack_after_apply_check: "pack.auto_create_after_apply",
             self.export_dir_edit: "pack.export_dir",
             self.browse_export_dir_button: "pack.browse_export",
@@ -474,6 +477,7 @@ class MainWindow(QMainWindow):
         self.watch_repository_state_check.toggled.connect(self._repository_watch_setting_changed)
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.include_sensitive_files_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.include_unversioned_files_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.auto_create_pack_after_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.browse_export_dir_button.clicked.connect(self._browse_export_directory)
@@ -559,6 +563,7 @@ class MainWindow(QMainWindow):
             self.watch_repository_state_check.setChecked(session.watch_repository_state)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
+            self.include_unversioned_files_check.setChecked(session.include_unversioned_files)
             self.auto_create_pack_after_apply_check.setChecked(session.auto_create_pack_after_apply)
             self.export_dir_edit.setText(session.export_dir)
             self.deploy_dir_edit.setText(session.deploy_dir)
@@ -650,6 +655,7 @@ class MainWindow(QMainWindow):
             watch_repository_state=self.watch_repository_state_check.isChecked(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
+            include_unversioned_files=self.include_unversioned_files_check.isChecked(),
             auto_create_pack_after_apply=self.auto_create_pack_after_apply_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
             deploy_dir=self.deploy_dir_edit.text().strip(),
@@ -1043,6 +1049,10 @@ class MainWindow(QMainWindow):
             self._append_log("Pack sensitive files: including tracked keys/certificates.")
         else:
             self._append_log("Pack sensitive files: excluded.")
+        if self.include_unversioned_files_check.isChecked():
+            self._append_log("Pack unversioned files: included.")
+        else:
+            self._append_log("Pack unversioned files: excluded.")
         try:
             result = create_pack(
                 self._repo_info.root,
@@ -1050,6 +1060,7 @@ class MainWindow(QMainWindow):
                 task_name,
                 selected_files,
                 include_sensitive=self.include_sensitive_files_check.isChecked(),
+                include_unversioned=self.include_unversioned_files_check.isChecked(),
             )
         except (FileNotFoundError, ValueError) as error:
             self._append_log(f"Cannot create pack: {error}")

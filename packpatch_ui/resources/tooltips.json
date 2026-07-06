@@ -51,5 +51,6 @@
   "patch.allow_unversioned": "Allow patch apply when the repository contains only unversioned, non-ignored files. Modified or staged tracked files still block apply. This setting is saved per session/repository workflow.",
   "settings.open": "Open per-session behavior settings for pack creation, patch apply, repository watching, and automatic deployment.",
   "pack.auto_create_after_apply": "Automatically run the existing Create pack flow after a patch applies new changes successfully. Dry-run and already-applied patches do not trigger pack creation. This setting is saved per session/repository workflow.",
-  "repo.watch_state": "Watch the selected git repository at runtime and refresh branch, HEAD, clean/dirty status, repository files, and commit history when external git state changes. This setting is saved per session/repository workflow."
+  "repo.watch_state": "Watch the selected git repository at runtime and refresh branch, HEAD, clean/dirty status, repository files, and commit history when external git state changes. This setting is saved per session/repository workflow.",
+  "pack.include_unversioned": "Include non-ignored unversioned files in created packs. Disabled by default because these files are usually local or temporary. The legacy full + untracked pack mode still includes them explicitly."
 }

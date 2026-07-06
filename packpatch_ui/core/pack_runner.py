@@ -69,6 +69,7 @@ def create_pack(
     selected_files: Sequence[str],
     *,
     include_sensitive: bool = False,
+    include_unversioned: bool = False,
 ) -> PackResult:
     """Create a PackPatch archive for *mode* inside *repo_root*."""
     cleaned_task = task_name.strip() or default_task_name_for_mode(mode)
@@ -78,16 +79,17 @@ def create_pack(
         raise FileNotFoundError(f"Pack script not found: {script}")
 
     sensitive_args = ["--include-sensitive"] if include_sensitive else []
+    unversioned_args = ["--include-untracked"] if include_unversioned else []
 
     if mode == "slice":
         files = [path.strip() for path in selected_files if path.strip()]
         if not files:
             raise ValueError("Select at least one file for slice pack creation.")
-        command = ["bash", str(script), "slice", cleaned_task, *sensitive_args, *files]
+        command = ["bash", str(script), "slice", cleaned_task, *unversioned_args, *sensitive_args, *files]
     elif mode == "changed":
-        command = ["bash", str(script), "changed", cleaned_task, *sensitive_args]
+        command = ["bash", str(script), "changed", cleaned_task, *unversioned_args, *sensitive_args]
     elif mode == "full":
-        command = ["bash", str(script), "full", cleaned_task, *sensitive_args]
+        command = ["bash", str(script), "full", cleaned_task, *unversioned_args, *sensitive_args]
     elif mode == "full-untracked":
         command = ["bash", str(script), "full", cleaned_task, "--include-untracked", *sensitive_args]
     elif mode == "history-depth-50":
