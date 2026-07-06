@@ -17,7 +17,7 @@ Use these rules when sending a `chatgpt-pack-*.tar.gz` archive to ChatGPT. PackP
 
 ## Universal prompt
 
-Give this prompt to a new ChatGPT conversation once. After that, request either `роби пакпатч` or `роби компатч`.
+Give this prompt to a new ChatGPT conversation once. After that, explicitly request either PackPatch or Compatсh mode. User-specific shorthand commands may be documented separately as aliases.
 
 ```text
 You support two deterministic workflows: PackPatch and Compatсh.
@@ -32,17 +32,17 @@ Archive selection:
 - Never reconstruct source files manually, mix archives, or use cached source code.
 
 PackPatch mode:
-- Trigger: I say "роби пакпатч".
+- Trigger: I explicitly request PackPatch mode.
 - Make the requested edits in the disposable repository.
 - Produce the patch only from real repository state via git diff.
 - Return exactly one .patch file and no sidecar files.
 - Validate with git apply --check against a clean disposable copy of the selected base.
 - Run relevant syntax or project checks when applicable.
 - Commit message in chat: one line, English, passive voice.
-- If I say "роби ще" without a new archive, continue from the previous PackPatch state by applying prior PackPatch files in order before producing the next git diff.
+- If I request PackPatch continuation without a new archive, continue from the previous PackPatch state by applying prior PackPatch files in order before producing the next git diff.
 
 Compatсh mode:
-- Trigger: I say "роби компатч".
+- Trigger: I explicitly request Compatсh mode.
 - Make the requested edits in the disposable repository.
 - Stage all intended changes with git add -A.
 - Create a real git commit with a one-line English passive-voice commit message.
@@ -54,7 +54,7 @@ Compatсh mode:
   git am --3way <patch-name>.patch
 - Run relevant syntax or project checks when applicable.
 - Verify the .patch file exists and is non-empty before linking it.
-- If I say "роби ще" or "роби ще компатч" without a new archive, continue from the retained Compatсh git history and create a new commit/format-patch from that state.
+- If I request Compatсh continuation without a new archive, continue from the retained Compatсh git history and create a new commit/format-patch from that state.
 - If continuation state is lost or ambiguous, ask for a new archive instead of guessing.
 
 For both modes:
@@ -63,6 +63,17 @@ For both modes:
 - If the task or archive state is genuinely ambiguous, say so instead of guessing.
 - In chat, provide the patch link, commit message, a short change summary, and validation results.
 ```
+
+## User command aliases
+
+The current user normally uses these Ukrainian shorthand commands:
+
+- `роби пакпатч` -> request PackPatch mode;
+- `роби компатч` -> request Compatсh mode;
+- `роби ще` -> continue the active workflow without changing modes;
+- `роби ще компатч` -> continue Compatсh mode.
+
+Treat these phrases as command aliases, not as part of the canonical English workflow language. Equivalent explicit requests in other languages have the same meaning.
 
 ## PackPatch prompt
 
@@ -80,7 +91,7 @@ Use PackPatch mode. Use the canonical chatgpt-pack-* archive rules. Work only in
 
 ### PackPatch continuation
 
-Without a new archive, `роби ще` continues from the last PackPatch state. Rebuild that state by applying previous PackPatch files in order, then create the next diff.
+Without a new archive, a PackPatch continuation request continues from the last PackPatch state. Rebuild that state by applying previous PackPatch files in order, then create the next diff.
 
 Do not continue when the prior patch failed, the local repository changed outside ChatGPT in a way the assistant cannot see, or the previous base is unclear. Upload a fresh pack instead.
 
@@ -100,7 +111,7 @@ Use Compatсh mode. Use the canonical chatgpt-pack-* archive rules. Work only in
 
 ### Compatсh continuation
 
-Without a new archive, `роби ще` or `роби ще компатч` continues from the retained git state. The previous Compatсh commit remains in history and the next change is created as a new commit.
+Without a new archive, a Compatсh continuation request continues from the retained git state. The previous Compatсh commit remains in history and the next change is created as a new commit.
 
 A new `chatgpt-pack-*` archive always discards that continuation state and becomes the new base.
 

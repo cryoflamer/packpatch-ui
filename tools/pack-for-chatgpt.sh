@@ -329,7 +329,7 @@ The user may request one of two workflows. Follow the requested mode.
 
 ## PackPatch mode
 
-When the user says `роби пакпатч`:
+When the user explicitly requests PackPatch mode:
 
 1. Make the requested edits.
 2. Generate the deliverable only from `git diff`.
@@ -341,7 +341,7 @@ Do not package PackPatch with `git format-patch`.
 
 ## Compatсh mode
 
-When the user says `роби компатч`:
+When the user explicitly requests Compatсh mode:
 
 1. Make the requested edits.
 2. Stage intended changes with `git add -A`.
@@ -358,6 +358,17 @@ When the user says `роби компатч`:
 7. Return exactly one `.patch` file and summarize the change and validation in chat.
 
 Do not use `git diff` as the Compatсh deliverable.
+
+## User command aliases
+
+The current user may use these Ukrainian shorthand commands:
+
+- `роби пакпатч` -> request PackPatch mode;
+- `роби компатч` -> request Compatсh mode;
+- `роби ще` -> continue the active workflow;
+- `роби ще компатч` -> continue Compatсh mode.
+
+Treat them as aliases. Equivalent explicit requests in other languages have the same meaning.
 
 ## Pack metadata
 
