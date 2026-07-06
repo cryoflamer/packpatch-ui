@@ -196,4 +196,4 @@ python -m pip install -e '.[test]'
 python -m pytest
 ```
 
-Core patch workflow tests use real temporary Git repositories. They exercise PackPatch and Compatсh apply behavior, fallback, repeated-apply detection, dirty-tree safety, dry-run behavior, author normalization, and undo-with-stash semantics.
+Core workflow tests use real temporary Git repositories. Patch tests exercise PackPatch and Compatсh apply behavior, fallback, repeated-apply detection, dirty-tree safety, dry-run behavior, author normalization, and undo-with-stash semantics. Pack tests exercise full, full + untracked, changed, and slice creation; preserved source history; working-tree state; unversioned and sensitive-file rules; archive metadata; and the generated ChatGPT workflow instructions.
