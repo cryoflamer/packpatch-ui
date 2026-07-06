@@ -105,6 +105,8 @@ class MainWindow(QMainWindow):
         self._repo_state_snapshot: GitRepoStateSnapshot | None = None
         self._repository_watch_busy = False
         self._log_entries: list[LogEntry] = []
+        self._pack_busy = False
+        self._apply_busy = False
 
         self.session_combo = QComboBox(self)
         self.new_session_button = QPushButton("New", self)
@@ -1103,7 +1105,42 @@ class MainWindow(QMainWindow):
         else:
             self._append_log("Auto deploy after commit failed.")
 
+    def _set_pack_busy(self, busy: bool) -> None:
+        self._pack_busy = busy
+        self._refresh_busy_controls()
+        QApplication.processEvents()
+
+    def _set_apply_busy(self, busy: bool) -> None:
+        self._apply_busy = busy
+        self._refresh_busy_controls()
+        QApplication.processEvents()
+
+    def _refresh_busy_controls(self) -> None:
+        any_busy = self._pack_busy or self._apply_busy
+
+        self.create_pack_button.setEnabled(not any_busy)
+        self.create_pack_button.setText("Creating..." if self._pack_busy else "Create pack")
+
+        self.apply_latest_patch_button.setEnabled(not any_busy)
+        self.apply_latest_patch_button.setText("Applying..." if self._apply_busy else "Apply patch")
+
+        self.check_latest_patch_button.setEnabled(not self._apply_busy)
+        self.dry_run_patch_button.setEnabled(not self._apply_busy)
+        self.undo_last_commit_button.setEnabled(not self._apply_busy)
+        self.deploy_repo_button.setEnabled(not self._apply_busy)
+        self.clear_session_files_button.setEnabled(not any_busy)
+
     def _create_pack(self) -> None:
+        if self._pack_busy:
+            return
+
+        self._set_pack_busy(True)
+        try:
+            self._create_pack_impl()
+        finally:
+            self._set_pack_busy(False)
+
+    def _create_pack_impl(self) -> None:
         if self._repo_info is None:
             self._append_log("Cannot create pack: no git repository selected.")
             self.statusBar().showMessage("No git repository selected")
@@ -1649,6 +1686,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Patch check failed with exit code {result.returncode}")
 
     def _apply_latest_patch(self, *, dry_run: bool) -> None:
+        if self._apply_busy:
+            return
+
+        self._set_apply_busy(True)
+        try:
+            self._apply_latest_patch_impl(dry_run=dry_run)
+        finally:
+            self._set_apply_busy(False)
+
+    def _apply_latest_patch_impl(self, *, dry_run: bool) -> None:
         if self._repo_info is None:
             self._append_log("Cannot apply patch: no git repository selected.")
             self.statusBar().showMessage("No git repository selected")
