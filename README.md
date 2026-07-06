@@ -186,3 +186,14 @@ The UI does not make ChatGPT the source of truth. The pack archive and your loca
 ## License
 
 TBD
+
+## Tests
+
+Install the test dependency and run the suite from the repository root:
+
+```bash
+python -m pip install -e '.[test]'
+python -m pytest
+```
+
+Core patch workflow tests use real temporary Git repositories. They exercise PackPatch and Compatсh apply behavior, fallback, repeated-apply detection, dirty-tree safety, dry-run behavior, author normalization, and undo-with-stash semantics.
