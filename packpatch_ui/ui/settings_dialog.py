@@ -22,6 +22,7 @@ class SettingsDialog(QDialog):
         *,
         auto_export_pack_check: QCheckBox,
         include_sensitive_files_check: QCheckBox,
+        auto_create_pack_after_apply_check: QCheckBox,
         apply_mode_combo: QComboBox,
         allow_unversioned_apply_check: QCheckBox,
         stash_changes_after_undo_check: QCheckBox,
@@ -37,6 +38,7 @@ class SettingsDialog(QDialog):
         pack_layout = QVBoxLayout(pack_group)
         pack_layout.addWidget(auto_export_pack_check)
         pack_layout.addWidget(include_sensitive_files_check)
+        pack_layout.addWidget(auto_create_pack_after_apply_check)
 
         apply_group = QGroupBox("Apply", self)
         apply_layout = QFormLayout(apply_group)

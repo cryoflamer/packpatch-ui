@@ -99,6 +99,7 @@ class MainWindow(QMainWindow):
 
         self.auto_export_pack_check = QCheckBox("Auto export pack", self)
         self.include_sensitive_files_check = QCheckBox("Include keys/certs", self)
+        self.auto_create_pack_after_apply_check = QCheckBox("Create pack after successful apply", self)
         self.export_dir_edit = QLineEdit(self)
         self.export_dir_edit.setPlaceholderText("Export directory for created packs")
         self.browse_export_dir_button = QPushButton("Browse export...", self)
@@ -136,6 +137,7 @@ class MainWindow(QMainWindow):
         self.settings_dialog = SettingsDialog(
             auto_export_pack_check=self.auto_export_pack_check,
             include_sensitive_files_check=self.include_sensitive_files_check,
+            auto_create_pack_after_apply_check=self.auto_create_pack_after_apply_check,
             apply_mode_combo=self.apply_mode_combo,
             allow_unversioned_apply_check=self.allow_unversioned_apply_check,
             stash_changes_after_undo_check=self.stash_changes_after_undo_check,
@@ -386,6 +388,7 @@ class MainWindow(QMainWindow):
             self.create_pack_button: "pack.create",
             self.auto_export_pack_check: "pack.auto_export",
             self.include_sensitive_files_check: "pack.include_sensitive",
+            self.auto_create_pack_after_apply_check: "pack.auto_create_after_apply",
             self.export_dir_edit: "pack.export_dir",
             self.browse_export_dir_button: "pack.browse_export",
             self.deploy_dir_edit: "deploy.dir",
@@ -459,6 +462,7 @@ class MainWindow(QMainWindow):
         self.stash_changes_after_undo_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.auto_export_pack_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.include_sensitive_files_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.auto_create_pack_after_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.export_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.browse_export_dir_button.clicked.connect(self._browse_export_directory)
         self.deploy_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
@@ -542,6 +546,7 @@ class MainWindow(QMainWindow):
             self.stash_changes_after_undo_check.setChecked(session.stash_changes_after_undo)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
+            self.auto_create_pack_after_apply_check.setChecked(session.auto_create_pack_after_apply)
             self.export_dir_edit.setText(session.export_dir)
             self.deploy_dir_edit.setText(session.deploy_dir)
             self.auto_deploy_after_commit_check.setChecked(session.auto_deploy_after_commit)
@@ -631,6 +636,7 @@ class MainWindow(QMainWindow):
             stash_changes_after_undo=self.stash_changes_after_undo_check.isChecked(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
+            auto_create_pack_after_apply=self.auto_create_pack_after_apply_check.isChecked(),
             export_dir=self.export_dir_edit.text().strip(),
             deploy_dir=self.deploy_dir_edit.text().strip(),
             auto_deploy_after_commit=self.auto_deploy_after_commit_check.isChecked(),
@@ -930,6 +936,14 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Deploy failed with exit code {result.returncode}")
         return False
+
+    def _auto_create_pack_after_apply(self) -> None:
+        if not self.auto_create_pack_after_apply_check.isChecked():
+            self._append_log("Auto pack creation skipped: create pack after apply is disabled.")
+            return
+
+        self._append_log("Auto pack creation triggered after successful apply.")
+        self._create_pack()
 
     def _auto_deploy_after_commit(self) -> None:
         if not self.auto_deploy_after_commit_check.isChecked():
@@ -1363,6 +1377,10 @@ class MainWindow(QMainWindow):
                     self._append_log("Auto deploy skipped: no commit was created.")
                 self.statusBar().showMessage(f"Patch applied via {result.applied_with}")
             self._refresh_repository_status()
+            if not dry_run and result.was_applied:
+                self._auto_create_pack_after_apply()
+            elif not dry_run and self.auto_create_pack_after_apply_check.isChecked():
+                self._append_log("Auto pack creation skipped: patch did not apply new changes.")
             self._schedule_autosave()
         else:
             self.statusBar().showMessage(f"Patch command failed with exit code {result.returncode}")

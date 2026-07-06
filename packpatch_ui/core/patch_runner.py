@@ -30,6 +30,7 @@ class PatchApplyResult:
     stderr: str
     selected_patch: Path | None = None
     created_commit: bool = False
+    was_applied: bool = False
     applied_with: str = ""
 
     @property
@@ -488,6 +489,7 @@ def _apply_packpatch(repo_root: Path, patch_path: Path, *, commit_message: str) 
         stderr=stderr,
         selected_patch=patch_path,
         created_commit=created_commit,
+        was_applied=True,
         applied_with="PackPatch",
     )
 
@@ -536,6 +538,7 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
             stderr=stderr,
             selected_patch=patch_path,
             created_commit=False,
+            was_applied=False,
             applied_with="Compatсh",
         )
     return PatchApplyResult(
@@ -545,6 +548,7 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
         stderr=stderr,
         selected_patch=patch_path,
         created_commit=result.returncode == 0,
+        was_applied=result.returncode == 0,
         applied_with="Compatсh",
     )
 
@@ -654,5 +658,6 @@ def _with_attempt_log(result: PatchApplyResult, attempts: list[str], *, header: 
         stderr=result.stderr,
         selected_patch=result.selected_patch,
         created_commit=result.created_commit,
+        was_applied=result.was_applied,
         applied_with=result.applied_with,
     )

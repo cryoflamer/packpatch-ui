@@ -49,5 +49,6 @@
   "deploy.run": "Deploy the committed HEAD tree into the deploy directory with rsync --delete, without copying untracked files.",
   "deploy.auto_after_commit": "Automatically deploy the committed HEAD tree after Apply patch creates a commit, including Compatсh patches applied with git am.",
   "patch.allow_unversioned": "Allow patch apply when the repository contains only unversioned, non-ignored files. Modified or staged tracked files still block apply. This setting is saved per session/repository workflow.",
-  "settings.open": "Open per-session behavior settings for pack creation, patch apply, and automatic deployment."
+  "settings.open": "Open per-session behavior settings for pack creation, patch apply, and automatic deployment.",
+  "pack.auto_create_after_apply": "Automatically run the existing Create pack flow after a patch applies new changes successfully. Dry-run and already-applied patches do not trigger pack creation. This setting is saved per session/repository workflow."
 }
