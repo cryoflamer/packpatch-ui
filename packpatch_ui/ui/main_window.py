@@ -158,6 +158,7 @@ class MainWindow(QMainWindow):
         )
 
         self.refresh_artifacts_button = QPushButton("Refresh packs/patch files", self)
+        self.clear_session_files_button = QPushButton("Clear session files...", self)
         self.copy_pack_path_button = QPushButton("Copy pack path", self)
         self.show_pack_in_explorer_button = QPushButton("Show in Explorer", self)
         self.copy_patch_path_button = QPushButton("Copy patch path", self)
@@ -274,6 +275,7 @@ class MainWindow(QMainWindow):
 
         artifact_controls = QHBoxLayout()
         artifact_controls.addWidget(self.refresh_artifacts_button)
+        artifact_controls.addWidget(self.clear_session_files_button)
         artifact_controls.addStretch(1)
 
         artifact_lists = QHBoxLayout()
@@ -389,6 +391,7 @@ class MainWindow(QMainWindow):
             self.save_session_as_button: "session.save_as",
             self.delete_session_button: "session.delete",
             self.settings_button: "settings.open",
+            self.clear_session_files_button: "artifacts.clear_session",
             self.repo_path_edit: "repo.path",
             self.browse_button: "repo.browse",
             self.refresh_button: "repo.refresh",
@@ -502,6 +505,7 @@ class MainWindow(QMainWindow):
         self.dry_run_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=True))
         self.apply_latest_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=False))
         self.refresh_artifacts_button.clicked.connect(self._refresh_artifact_lists)
+        self.clear_session_files_button.clicked.connect(self._clear_session_files)
         self.copy_pack_path_button.clicked.connect(lambda: self._copy_selected_artifact_path(self.pack_list, "pack"))
         self.show_pack_in_explorer_button.clicked.connect(self._show_selected_pack_in_explorer)
         self.pack_list.itemDoubleClicked.connect(lambda *_: self._show_selected_pack_in_explorer())
@@ -1296,6 +1300,84 @@ class MainWindow(QMainWindow):
             if isinstance(path_value, str) and path_value:
                 paths.append(Path(path_value).expanduser())
         return paths
+
+    def _clear_session_files(self) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot clear session files: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
+            return
+
+        packs = [item.path for item in list_pack_archives(self._repo_info.root)]
+        patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
+        patches = [item.path for item in list_patch_files(patch_dir)]
+
+        export_dir_text = self.export_dir_edit.text().strip()
+        exported_packs: list[Path] = []
+        if export_dir_text:
+            export_dir = Path(export_dir_text).expanduser()
+            if export_dir.is_dir():
+                exported_packs = [
+                    export_dir / pack.name
+                    for pack in packs
+                    if (export_dir / pack.name).is_file()
+                ]
+
+        response = QMessageBox.question(
+            self,
+            "Clear session files",
+            (
+                f'Clear pack archives and patch files for session "{self._current_session_name}"?\n\n'
+                f"Packs: {len(packs)}\n"
+                f"Exported pack copies: {len(exported_packs)}\n"
+                f"Patches: {len(patches)}\n\n"
+                "Session settings will be preserved."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if response != QMessageBox.StandardButton.Yes:
+            self._append_log("[cleanup] session file cleanup cancelled")
+            self.statusBar().showMessage("Session file cleanup cancelled")
+            return
+
+        deleted_packs = 0
+        deleted_exported = 0
+        deleted_patches = 0
+        failed: list[str] = []
+
+        for path in packs:
+            try:
+                if delete_artifact(path):
+                    deleted_packs += 1
+            except (OSError, ValueError) as error:
+                failed.append(f"{path}: {error}")
+
+        for path in exported_packs:
+            try:
+                if delete_artifact(path):
+                    deleted_exported += 1
+            except (OSError, ValueError) as error:
+                failed.append(f"{path}: {error}")
+
+        for path in patches:
+            try:
+                if delete_artifact(path):
+                    deleted_patches += 1
+            except (OSError, ValueError) as error:
+                failed.append(f"{path}: {error}")
+
+        self.patch_preview.clear()
+        self._refresh_artifact_lists()
+        self._append_log(f"[cleanup] session files cleared: {self._current_session_name}")
+        self._append_log(f"[cleanup] packs deleted: {deleted_packs}")
+        self._append_log(f"[cleanup] exported pack copies deleted: {deleted_exported}")
+        self._append_log(f"[cleanup] patches deleted: {deleted_patches}")
+        if failed:
+            failed_preview = "\n".join(f"  {item}" for item in failed)
+            self._append_log(f"[cleanup] failed to delete some files:\n{failed_preview}")
+            self.statusBar().showMessage("Session files cleared with errors")
+        else:
+            self.statusBar().showMessage("Session files cleared")
 
     def _delete_selected_artifacts(
         self,
