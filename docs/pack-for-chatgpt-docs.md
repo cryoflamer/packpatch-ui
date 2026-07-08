@@ -82,7 +82,8 @@ chatgpt-pack/
 ## Sensitive and unversioned files
 
 - Unversioned files не включаються за замовчуванням; `--include-untracked` явно додає non-ignored untracked files.
-- Sensitive key/certificate patterns виключаються за замовчуванням.
+- Sensitive env/key/certificate patterns виключаються за замовчуванням.
+- Tracked env templates `.env.example`, `.env.sample`, `.env.template` і `.env.dist` вважаються safe templates та включаються звичайно.
 - `--include-sensitive` дозволяє включити tracked sensitive files. Untracked sensitive files лишаються виключеними.
 
 Не передавай секрети без явної необхідності.

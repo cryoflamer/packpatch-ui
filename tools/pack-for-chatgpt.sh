@@ -129,8 +129,25 @@ is_safe_relative_path() {
     return 0
 }
 
+is_safe_env_template_path() {
+    local p="$1"
+
+    case "$p" in
+        .env.example|*/.env.example) return 0 ;;
+        .env.sample|*/.env.sample) return 0 ;;
+        .env.template|*/.env.template) return 0 ;;
+        .env.dist|*/.env.dist) return 0 ;;
+    esac
+
+    return 1
+}
+
 is_sensitive_path() {
     local p="$1"
+
+    if is_safe_env_template_path "$p"; then
+        return 1
+    fi
 
     case "$p" in
         .env|.env.*|*/.env|*/.env.*) return 0 ;;

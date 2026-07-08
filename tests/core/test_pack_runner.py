@@ -168,6 +168,65 @@ def test_full_untracked_mode_always_includes_unversioned_files(tmp_path: Path) -
     assert (pack_dir / "local.tmp").is_file()
 
 
+def test_safe_env_templates_are_included_in_full_slice_and_changed_packs(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    templates = {
+        ".env.example": "EXAMPLE=value\n",
+        "config/.env.sample": "SAMPLE=value\n",
+        "config/.env.template": "TEMPLATE=value\n",
+        "config/.env.dist": "DIST=value\n",
+    }
+    for path, content in templates.items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    git(repo, "add", *templates)
+    git(repo, "commit", "-m", "Env templates were added")
+
+    _, full_pack = make_pack(repo, tmp_path / "full", "full")
+    for path, content in templates.items():
+        assert (full_pack / path).read_text(encoding="utf-8") == content
+
+    _, slice_pack = make_pack(
+        repo,
+        tmp_path / "slice",
+        "slice",
+        selected_files=[".env.example", "config"],
+    )
+    for path, content in templates.items():
+        assert (slice_pack / path).read_text(encoding="utf-8") == content
+
+    (repo / ".env.example").write_text("EXAMPLE=changed\n", encoding="utf-8")
+    (repo / "config" / ".env.sample").write_text("SAMPLE=changed\n", encoding="utf-8")
+    _, changed_pack = make_pack(repo, tmp_path / "changed", "changed")
+    assert (changed_pack / ".env.example").read_text(encoding="utf-8") == "EXAMPLE=changed\n"
+    assert (changed_pack / "config" / ".env.sample").read_text(encoding="utf-8") == "SAMPLE=changed\n"
+
+
+def test_real_env_files_remain_sensitive(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    secrets = {
+        ".env": "SECRET=root\n",
+        ".env.production": "SECRET=prod\n",
+        "config/.env": "SECRET=nested\n",
+        "config/.env.local": "SECRET=local\n",
+    }
+    for path, content in secrets.items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    git(repo, "add", "-f", *secrets)
+    git(repo, "commit", "-m", "Tracked env files were added")
+
+    _, excluded_pack = make_pack(repo, tmp_path / "excluded", "full")
+    for path in secrets:
+        assert not (excluded_pack / path).exists()
+
+    _, included_pack = make_pack(repo, tmp_path / "included", "full", include_sensitive=True)
+    for path, content in secrets.items():
+        assert (included_pack / path).read_text(encoding="utf-8") == content
+
+
 def test_tracked_sensitive_files_require_explicit_opt_in(tmp_path: Path) -> None:
     repo = init_repo(tmp_path)
     (repo / "client.key").write_text("tracked-secret\n", encoding="utf-8")
