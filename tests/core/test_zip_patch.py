@@ -57,3 +57,31 @@ def test_corrupt_zip_is_rejected(tmp_path: Path) -> None:
 def test_non_patch_zip_does_not_offer_members(tmp_path: Path) -> None:
     archive = make_zip(tmp_path / "none.zip", {"README.md": "hi"})
     assert patch_members(archive) == []
+
+
+def test_only_zip_archives_containing_usable_patches_are_listed(tmp_path: Path) -> None:
+    valid = make_zip(tmp_path / "patches.zip", {"nested/fix.patch": "patch"})
+    make_zip(tmp_path / "documents.zip", {"paper.pdf": "content"})
+    make_zip(tmp_path / "unsafe.zip", {"../../outside.patch": "malicious"})
+    (tmp_path / "broken.zip").write_bytes(b"not a zip")
+    (tmp_path / "ordinary.diff").write_text("diff", encoding="utf-8")
+
+    listed = {item.path for item in list_patch_files(tmp_path, include_zip=True)}
+    assert listed == {valid, tmp_path / "ordinary.diff"}
+    assert {item.path for item in list_patch_files(tmp_path)} == {tmp_path / "ordinary.diff"}
+
+
+def test_patch_cleanup_does_not_delete_unrelated_zip_files(tmp_path: Path) -> None:
+    from packpatch_ui.core.artifacts import delete_artifact
+
+    patch_zip = make_zip(tmp_path / "fix.zip", {"fix.patch": "patch"})
+    ordinary_zip = make_zip(tmp_path / "photos.zip", {"photo.png": "data"})
+    broken_zip = tmp_path / "broken.zip"
+    broken_zip.write_bytes(b"broken")
+
+    for item in list_patch_files(tmp_path, include_zip=True):
+        delete_artifact(item.path)
+
+    assert not patch_zip.exists()
+    assert ordinary_zip.exists()
+    assert broken_zip.exists()

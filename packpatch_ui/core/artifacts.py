@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from packpatch_ui.core.zip_patch import patch_members
+
 
 @dataclass(frozen=True)
 class ArtifactInfo:
@@ -48,7 +50,18 @@ def list_pack_archives(repo_root: Path) -> list[ArtifactInfo]:
 
 def list_patch_files(patch_dir: Path, *, include_zip: bool = False) -> list[ArtifactInfo]:
     """Return patch files from *patch_dir*."""
-    return _list_artifacts(patch_dir, patterns=("*.patch", "*.diff", "*.zip") if include_zip else ("*.patch", "*.diff"))
+    patches = _list_artifacts(patch_dir, patterns=("*.patch", "*.diff"))
+    if not include_zip:
+        return patches
+
+    for archive in _list_artifacts(patch_dir, patterns=("*.zip",)):
+        try:
+            if patch_members(archive.path):
+                patches.append(archive)
+        except ValueError:
+            # Invalid archives are not patch artifacts and must never be cleaned up.
+            continue
+    return sorted(patches, key=lambda item: (item.modified_timestamp, item.path.name), reverse=True)
 
 
 def _list_artifacts(directory: Path, *, patterns: tuple[str, ...]) -> list[ArtifactInfo]:
