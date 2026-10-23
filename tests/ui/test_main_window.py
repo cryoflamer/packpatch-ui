@@ -278,11 +278,15 @@ def test_zip_patch_setting_controls_listing_and_persists(window: MainWindow, tmp
     window.accept_zip_patches_check.setChecked(True)
     window._refresh_artifact_lists()
     assert window.patch_list.count() == 1
-    assert window._snapshot_session().accept_zip_patches is True
+    assert window._current_session_snapshot(
+        window.session_combo.currentText()
+    ).accept_zip_patches is True
 
     window.accept_zip_patches_check.setChecked(False)
     assert window.patch_list.count() == 0
-    assert window._snapshot_session().accept_zip_patches is False
+    assert window._current_session_snapshot(
+        window.session_combo.currentText()
+    ).accept_zip_patches is False
 
 
 def test_zip_patch_resolves_member_until_action_finishes(window: MainWindow, tmp_path: Path) -> None:
