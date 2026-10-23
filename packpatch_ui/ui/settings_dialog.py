@@ -31,6 +31,7 @@ class SettingsDialog(QDialog):
         git_history_depth_spin: QSpinBox,
         auto_create_pack_after_apply_check: QCheckBox,
         apply_mode_combo: QComboBox,
+        compatch_cr_mode_combo: QComboBox,
         allow_unversioned_apply_check: QCheckBox,
         stash_changes_after_undo_check: QCheckBox,
         watch_repository_state_check: QCheckBox,
@@ -53,6 +54,7 @@ class SettingsDialog(QDialog):
         apply_group = QGroupBox("Apply", self)
         apply_layout = QFormLayout(apply_group)
         apply_layout.addRow("Apply mode:", apply_mode_combo)
+        apply_layout.addRow("Compatch CR handling:", compatch_cr_mode_combo)
         apply_layout.addRow(allow_unversioned_apply_check)
         apply_layout.addRow(stash_changes_after_undo_check)
 

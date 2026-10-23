@@ -56,5 +56,6 @@
   "pack.include_unversioned": "Include non-ignored unversioned files in created packs. Disabled by default because these files are usually local or temporary. The legacy full + untracked pack mode still includes them explicitly.",
   "pack.history_depth": "Number of real source git commits to preserve in every created pack. The minimum and default is 1, so packs always keep the real source HEAD instead of a synthetic base. Larger values include more commit history and may expose older code, messages, or authorship data.",
   "settings.clear_all_sessions_files": "Delete PackPatch pack archives, exported pack copies, and patch files referenced by all saved sessions. Duplicate directories are handled once and session settings are preserved.",
-  "log.verbosity": "Filter log verbosity. Status is the concise default; Details shows workflow decisions; Debug shows raw commands and process output. Existing entries are re-rendered immediately."
+  "log.verbosity": "Filter log verbosity. Status is the concise default; Details shows workflow decisions; Debug shows raw commands and process output. Existing entries are re-rendered immediately.",
+  "patch.compatch_cr_mode": "Choose Normal (git am --3way), Keep CR (git am --keep-cr --3way), or Auto (retry with --keep-cr after aborting a failed normal attempt)."
 }

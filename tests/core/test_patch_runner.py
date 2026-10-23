@@ -314,3 +314,34 @@ def test_apply_context_reports_selected_mode(tmp_path: Path, mode: str, expected
 
     assert result.succeeded
     assert f"Apply mode: {expected}" in result.stdout
+
+@pytest.mark.parametrize("cr_mode, expected_flag", [
+    ("normal", False), ("keep_cr", True), ("auto", False),
+])
+def test_compatch_cr_modes_apply_once(tmp_path: Path, cr_mode: str, expected_flag: bool) -> None:
+    repo = init_repo(tmp_path)
+    patch_dir = tmp_path / "patches"
+    patch = make_compatch(repo, patch_dir)
+    result = apply_latest_patch(repo, patch_dir, patch_path=patch, compatch_cr_mode=cr_mode)
+    assert result.succeeded, result.stderr
+    assert result.created_commit
+    assert ("--keep-cr" in result.command) is expected_flag
+    assert git(repo, "rev-list", "--count", "HEAD") == "2"
+    repeat = apply_latest_patch(repo, patch_dir, patch_path=patch, compatch_cr_mode=cr_mode)
+    assert repeat.succeeded and not repeat.created_commit
+
+
+def test_compatch_auto_failed_retry_restores_repository(tmp_path: Path) -> None:
+    repo = init_repo(tmp_path)
+    patch_dir = tmp_path / "patches"
+    patch = make_compatch(repo, patch_dir, replacement="replacement\n")
+    (repo / "example.txt").write_text("conflicting contents\n", encoding="utf-8")
+    git(repo, "add", "example.txt")
+    git(repo, "commit", "-m", "Conflicting change")
+    before = git(repo, "rev-parse", "HEAD")
+    result = apply_latest_patch(repo, patch_dir, patch_path=patch, compatch_cr_mode="auto")
+    assert not result.succeeded
+    assert "Auto retry with git am --keep-cr --3way." in result.stdout
+    assert git(repo, "rev-parse", "HEAD") == before
+    assert not (repo / ".git" / "rebase-apply").exists()
+    assert git(repo, "status", "--porcelain") == ""

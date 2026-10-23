@@ -49,6 +49,9 @@ from packpatch_ui.core.git_repo import (
 )
 from packpatch_ui.core.pack_runner import PACK_MODE_LABELS, create_pack, default_task_name_for_mode
 from packpatch_ui.core.patch_runner import (
+    COMPATCH_CR_AUTO,
+    COMPATCH_CR_LABELS,
+    normalize_compatch_cr_mode,
     APPLY_MODE_LABELS,
     APPLY_MODE_COMPATCH_THEN_PACKPATCH,
     apply_latest_patch,
@@ -168,6 +171,9 @@ class MainWindow(QMainWindow):
         self.apply_mode_combo = QComboBox(self)
         for mode, label in APPLY_MODE_LABELS.items():
             self.apply_mode_combo.addItem(label, mode)
+        self.compatch_cr_mode_combo = QComboBox(self)
+        for value, label in COMPATCH_CR_LABELS.items():
+            self.compatch_cr_mode_combo.addItem(label, value)
         self.allow_unversioned_apply_check = QCheckBox("Allow unversioned files during apply", self)
         self.stash_changes_after_undo_check = QCheckBox("Stash changes after undo", self)
         self.watch_repository_state_check = QCheckBox("Watch repository state", self)
@@ -182,6 +188,7 @@ class MainWindow(QMainWindow):
             git_history_depth_spin=self.git_history_depth_spin,
             auto_create_pack_after_apply_check=self.auto_create_pack_after_apply_check,
             apply_mode_combo=self.apply_mode_combo,
+            compatch_cr_mode_combo=self.compatch_cr_mode_combo,
             allow_unversioned_apply_check=self.allow_unversioned_apply_check,
             stash_changes_after_undo_check=self.stash_changes_after_undo_check,
             watch_repository_state_check=self.watch_repository_state_check,
@@ -466,6 +473,7 @@ class MainWindow(QMainWindow):
             self.browse_patch_dir_button: "patch.browse_dir",
             self.patch_target_combo: "patch.target",
             self.apply_mode_combo: "patch.apply_mode",
+            self.compatch_cr_mode_combo: "patch.compatch_cr_mode",
             self.allow_unversioned_apply_check: "patch.allow_unversioned",
             self.stash_changes_after_undo_check: "commit.stash_after_undo",
             self.watch_repository_state_check: "repo.watch_state",
@@ -525,6 +533,7 @@ class MainWindow(QMainWindow):
         self.patch_dir_edit.textEdited.connect(lambda *_: self._schedule_autosave())
         self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.apply_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
+        self.compatch_cr_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.allow_unversioned_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.stash_changes_after_undo_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.watch_repository_state_check.toggled.connect(self._repository_watch_setting_changed)
@@ -612,6 +621,8 @@ class MainWindow(QMainWindow):
             self.commit_message_edit.setText(session.commit_message)
             self._set_patch_target_mode(session.patch_target_mode)
             self._set_apply_mode(session.apply_mode)
+            index = self.compatch_cr_mode_combo.findData(normalize_compatch_cr_mode(session.compatch_cr_mode))
+            self.compatch_cr_mode_combo.setCurrentIndex(index)
             self.allow_unversioned_apply_check.setChecked(session.allow_unversioned_apply)
             self.stash_changes_after_undo_check.setChecked(session.stash_changes_after_undo)
             self.watch_repository_state_check.setChecked(session.watch_repository_state)
@@ -705,6 +716,7 @@ class MainWindow(QMainWindow):
             commit_message=self.commit_message_edit.text().strip(),
             patch_target_mode=self._current_patch_target_mode(),
             apply_mode=self._current_apply_mode(),
+            compatch_cr_mode=str(self.compatch_cr_mode_combo.currentData() or COMPATCH_CR_AUTO),
             allow_unversioned_apply=self.allow_unversioned_apply_check.isChecked(),
             stash_changes_after_undo=self.stash_changes_after_undo_check.isChecked(),
             watch_repository_state=self.watch_repository_state_check.isChecked(),
@@ -1731,6 +1743,7 @@ class MainWindow(QMainWindow):
                 commit_message=commit_message,
                 patch_path=patch_path,
                 apply_mode=apply_mode,
+                compatch_cr_mode=str(self.compatch_cr_mode_combo.currentData() or COMPATCH_CR_AUTO),
                 allow_unversioned_files=self.allow_unversioned_apply_check.isChecked(),
             )
         except FileNotFoundError as error:

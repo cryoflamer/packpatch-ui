@@ -11,6 +11,15 @@ from packpatch_ui.services.process_runner import run_process
 MAX_PATCH_PREVIEW_BYTES = 512_000
 FORMAT_PATCH_DETECTION_BYTES = 64_000
 
+COMPATCH_CR_NORMAL = "normal"
+COMPATCH_CR_KEEP = "keep_cr"
+COMPATCH_CR_AUTO = "auto"
+COMPATCH_CR_LABELS = {
+    COMPATCH_CR_NORMAL: "Normal",
+    COMPATCH_CR_KEEP: "Keep CR",
+    COMPATCH_CR_AUTO: "Auto",
+}
+
 APPLY_MODE_PACKPATCH_THEN_COMPATCH = "packpatch_then_compatch"
 APPLY_MODE_COMPATCH_THEN_PACKPATCH = "compatch_then_packpatch"
 
@@ -82,11 +91,13 @@ def apply_latest_patch(
     patch_path: Path | None = None,
     apply_mode: str = APPLY_MODE_COMPATCH_THEN_PACKPATCH,
     allow_unversioned_files: bool = False,
+    compatch_cr_mode: str = COMPATCH_CR_AUTO,
 ) -> PatchApplyResult:
     """Apply a selected patch or fall back to the latest patch from *patch_dir*."""
     patch_path = _resolve_patch_path(patch_dir, patch_path)
     normalized_mode = normalize_apply_mode(apply_mode)
     format_patch = is_format_patch(patch_path)
+    cr_mode = normalize_compatch_cr_mode(compatch_cr_mode)
 
     if dry_run:
         return _dry_run_result(repo_root, patch_path, normalized_mode, format_patch)
@@ -100,6 +111,7 @@ def apply_latest_patch(
             primary="compatch",
             fallback="packpatch",
             allow_unversioned_files=allow_unversioned_files,
+            compatch_cr_mode=cr_mode,
         )
 
     return _apply_with_order(
@@ -110,7 +122,12 @@ def apply_latest_patch(
         primary="packpatch",
         fallback="compatch",
         allow_unversioned_files=allow_unversioned_files,
+        compatch_cr_mode=cr_mode,
     )
+
+
+def normalize_compatch_cr_mode(mode: str) -> str:
+    return mode if mode in COMPATCH_CR_LABELS else COMPATCH_CR_AUTO
 
 
 def normalize_apply_mode(apply_mode: str) -> str:
@@ -279,6 +296,7 @@ def _apply_with_order(
     primary: str,
     fallback: str,
     allow_unversioned_files: bool,
+    compatch_cr_mode: str,
 ) -> PatchApplyResult:
     attempts: list[str] = []
     header = [
@@ -301,6 +319,7 @@ def _apply_with_order(
         strategy=primary,
         commit_message=commit_message,
         format_patch=format_patch,
+        compatch_cr_mode=compatch_cr_mode,
     )
     attempts.append(_format_attempt(primary, primary_result))
     if primary_result.succeeded:
@@ -329,6 +348,7 @@ def _apply_with_order(
         strategy=fallback,
         commit_message=commit_message,
         format_patch=format_patch,
+        compatch_cr_mode=compatch_cr_mode,
     )
     attempts.append(_format_attempt(fallback, fallback_result))
     return _with_attempt_log(fallback_result, attempts, header=header)
@@ -341,9 +361,10 @@ def _try_apply_strategy(
     strategy: str,
     commit_message: str,
     format_patch: bool,
+    compatch_cr_mode: str,
 ) -> PatchApplyResult:
     if strategy == "compatch":
-        return _apply_compatch(repo_root, patch_path, format_patch=format_patch)
+        return _apply_compatch(repo_root, patch_path, format_patch=format_patch, cr_mode=compatch_cr_mode)
     return _apply_packpatch(repo_root, patch_path, commit_message=commit_message)
 
 
@@ -516,8 +537,12 @@ def _apply_packpatch(repo_root: Path, patch_path: Path, *, commit_message: str) 
     )
 
 
-def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) -> PatchApplyResult:
+def _apply_compatch(
+    repo_root: Path, patch_path: Path, *, format_patch: bool, cr_mode: str = COMPATCH_CR_AUTO
+) -> PatchApplyResult:
     command = ["git", "am", "--3way", str(patch_path)]
+    if cr_mode == COMPATCH_CR_KEEP:
+        command.insert(2, "--keep-cr")
     if not format_patch:
         return PatchApplyResult(
             command=command,
@@ -546,6 +571,31 @@ def _apply_compatch(repo_root: Path, patch_path: Path, *, format_patch: bool) ->
     result = run_process(command, cwd=repo_root, check=False)
     stdout = result.stdout
     stderr = result.stderr
+    if result.returncode != 0 and cr_mode == COMPATCH_CR_AUTO:
+        # git am can leave rebase-apply state; abort must succeed before retry.
+        git_dir_result = run_process(["git", "rev-parse", "--git-dir"], cwd=repo_root, check=False)
+        git_dir = (repo_root / git_dir_result.stdout.strip()).resolve() if git_dir_result.returncode == 0 else None
+        if git_dir is None:
+            stderr += "Auto Keep CR retry skipped: Git directory could not be resolved.\n"
+        else:
+            if (git_dir / "rebase-apply").exists():
+                abort = run_process(["git", "am", "--abort"], cwd=repo_root, check=False)
+                if abort.returncode != 0 or (git_dir / "rebase-apply").exists():
+                    stderr += "Auto Keep CR retry skipped: git am --abort failed.\n" + abort.stderr
+                    git_dir = None
+            if git_dir is not None:
+                head = run_process(["git", "status", "--porcelain"], cwd=repo_root, check=False)
+                if head.returncode != 0 or head.stdout.strip():
+                    stderr += "Auto Keep CR retry skipped: working tree is not clean after abort.\n"
+                else:
+                    retry_command = ["git", "am", "--keep-cr", "--3way", str(patch_path)]
+                    retry = run_process(retry_command, cwd=repo_root, check=False)
+                    stdout += "Auto retry with git am --keep-cr --3way.\n" + retry.stdout
+                    stderr += retry.stderr
+                    result = retry
+                    command = retry_command
+                    if retry.returncode != 0:
+                        _abort_git_am(repo_root)
     if result.returncode == 0:
         stdout += "Applied via git am; commit was created.\n"
         override_result = _override_latest_commit_author(repo_root)
