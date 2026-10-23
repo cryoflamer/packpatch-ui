@@ -32,6 +32,7 @@ class SettingsDialog(QDialog):
         auto_create_pack_after_apply_check: QCheckBox,
         apply_mode_combo: QComboBox,
         compatch_cr_mode_combo: QComboBox,
+        accept_zip_patches_check: QCheckBox,
         allow_unversioned_apply_check: QCheckBox,
         stash_changes_after_undo_check: QCheckBox,
         watch_repository_state_check: QCheckBox,
@@ -55,6 +56,7 @@ class SettingsDialog(QDialog):
         apply_layout = QFormLayout(apply_group)
         apply_layout.addRow("Apply mode:", apply_mode_combo)
         apply_layout.addRow("Compatch CR handling:", compatch_cr_mode_combo)
+        apply_layout.addRow(accept_zip_patches_check)
         apply_layout.addRow(allow_unversioned_apply_check)
         apply_layout.addRow(stash_changes_after_undo_check)
 

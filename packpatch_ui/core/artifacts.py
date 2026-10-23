@@ -46,9 +46,9 @@ def list_pack_archives(repo_root: Path) -> list[ArtifactInfo]:
     return _list_artifacts(repo_root / "chatgpt-packs", patterns=("chatgpt-pack-*.tar.gz",))
 
 
-def list_patch_files(patch_dir: Path) -> list[ArtifactInfo]:
+def list_patch_files(patch_dir: Path, *, include_zip: bool = False) -> list[ArtifactInfo]:
     """Return patch files from *patch_dir*."""
-    return _list_artifacts(patch_dir, patterns=("*.patch", "*.diff"))
+    return _list_artifacts(patch_dir, patterns=("*.patch", "*.diff", "*.zip") if include_zip else ("*.patch", "*.diff"))
 
 
 def _list_artifacts(directory: Path, *, patterns: tuple[str, ...]) -> list[ArtifactInfo]:

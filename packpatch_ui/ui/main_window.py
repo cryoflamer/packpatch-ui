@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import html
 import shutil
+from contextlib import contextmanager
+from typing import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from enum import IntEnum
@@ -38,6 +40,7 @@ from PySide6.QtWidgets import (
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack_archives, list_patch_files
 from packpatch_ui.core.deploy_runner import deploy_repo
+from packpatch_ui.core.zip_patch import extracted_patch, patch_members
 from packpatch_ui.core.git_repo import (
     GitRepoInfo,
     GitRepoStateSnapshot,
@@ -174,6 +177,8 @@ class MainWindow(QMainWindow):
         self.compatch_cr_mode_combo = QComboBox(self)
         for value, label in COMPATCH_CR_LABELS.items():
             self.compatch_cr_mode_combo.addItem(label, value)
+        self.accept_zip_patches_check = QCheckBox("Accept patches from ZIP archives", self)
+        self.accept_zip_patches_check.setChecked(True)
         self.allow_unversioned_apply_check = QCheckBox("Allow unversioned files during apply", self)
         self.stash_changes_after_undo_check = QCheckBox("Stash changes after undo", self)
         self.watch_repository_state_check = QCheckBox("Watch repository state", self)
@@ -189,6 +194,7 @@ class MainWindow(QMainWindow):
             auto_create_pack_after_apply_check=self.auto_create_pack_after_apply_check,
             apply_mode_combo=self.apply_mode_combo,
             compatch_cr_mode_combo=self.compatch_cr_mode_combo,
+            accept_zip_patches_check=self.accept_zip_patches_check,
             allow_unversioned_apply_check=self.allow_unversioned_apply_check,
             stash_changes_after_undo_check=self.stash_changes_after_undo_check,
             watch_repository_state_check=self.watch_repository_state_check,
@@ -534,6 +540,7 @@ class MainWindow(QMainWindow):
         self.patch_target_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.apply_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
         self.compatch_cr_mode_combo.currentIndexChanged.connect(lambda *_: self._schedule_autosave())
+        self.accept_zip_patches_check.toggled.connect(self._zip_setting_changed)
         self.allow_unversioned_apply_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.stash_changes_after_undo_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.watch_repository_state_check.toggled.connect(self._repository_watch_setting_changed)
@@ -623,6 +630,7 @@ class MainWindow(QMainWindow):
             self._set_apply_mode(session.apply_mode)
             index = self.compatch_cr_mode_combo.findData(normalize_compatch_cr_mode(session.compatch_cr_mode))
             self.compatch_cr_mode_combo.setCurrentIndex(index)
+            self.accept_zip_patches_check.setChecked(session.accept_zip_patches)
             self.allow_unversioned_apply_check.setChecked(session.allow_unversioned_apply)
             self.stash_changes_after_undo_check.setChecked(session.stash_changes_after_undo)
             self.watch_repository_state_check.setChecked(session.watch_repository_state)
@@ -717,6 +725,7 @@ class MainWindow(QMainWindow):
             patch_target_mode=self._current_patch_target_mode(),
             apply_mode=self._current_apply_mode(),
             compatch_cr_mode=str(self.compatch_cr_mode_combo.currentData() or COMPATCH_CR_AUTO),
+            accept_zip_patches=self.accept_zip_patches_check.isChecked(),
             allow_unversioned_apply=self.allow_unversioned_apply_check.isChecked(),
             stash_changes_after_undo=self.stash_changes_after_undo_check.isChecked(),
             watch_repository_state=self.watch_repository_state_check.isChecked(),
@@ -1298,7 +1307,7 @@ class MainWindow(QMainWindow):
             pack_count = self._populate_artifact_list(self.pack_list, list_pack_archives(self._repo_info.root))
 
         patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
-        patch_count = self._populate_artifact_list(self.patch_list, list_patch_files(patch_dir))
+        patch_count = self._populate_artifact_list(self.patch_list, list_patch_files(patch_dir, include_zip=self.accept_zip_patches_check.isChecked()))
 
         self._append_log(
             "Artifact lists refreshed:\n"
@@ -1345,7 +1354,10 @@ class MainWindow(QMainWindow):
 
         if mode == "latest":
             try:
-                return latest_patch_path(patch_dir), True
+                items = list_patch_files(patch_dir, include_zip=self.accept_zip_patches_check.isChecked())
+                if not items:
+                    raise FileNotFoundError(f"No patch artifacts found in: {patch_dir}")
+                return items[0].path, True
             except FileNotFoundError as error:
                 self._append_log(f"Cannot resolve latest patch: {error}")
                 self.statusBar().showMessage("No latest patch found")
@@ -1366,6 +1378,41 @@ class MainWindow(QMainWindow):
             return None, False
         return paths[0], True
 
+    def _zip_setting_changed(self, *_args: object) -> None:
+        self._schedule_autosave()
+        self._refresh_artifact_lists()
+
+    def _zip_member(self, archive: Path) -> str | None:
+        try:
+            members = patch_members(archive)
+        except ValueError as error:
+            self._append_log(f"ZIP patch error: {error}", severity=LogSeverity.ERROR)
+            self.statusBar().showMessage("Cannot read ZIP patch")
+            return None
+        if not members:
+            self._append_log(f"No safe .patch/.diff member found in {archive}", severity=LogSeverity.ERROR)
+            self.statusBar().showMessage("ZIP contains no usable patch")
+            return None
+        if len(members) == 1:
+            return members[0]
+        member, accepted = QInputDialog.getItem(
+            self, "Select patch from ZIP", f"Patch in {archive.name}:", members, 0, False,
+        )
+        return member if accepted else None
+
+    @contextmanager
+    def _resolved_patch(self, path: Path) -> Iterator[Path | None]:
+        if path.suffix.lower() != ".zip":
+            yield path
+            return
+        member = self._zip_member(path)
+        if member is None:
+            yield None
+            return
+        with extracted_patch(path, member) as extracted:
+            self._append_log(f"Selected ZIP patch: {path.name} / {member}", verbosity=LogVerbosity.DETAILS)
+            yield extracted
+
     def _preview_selected_patch(self, *, silent: bool = False) -> None:
         patch_path = self._selected_patch_path()
         if patch_path is None:
@@ -1373,8 +1420,16 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            text, truncated = read_patch_preview(patch_path)
-        except FileNotFoundError as error:
+            if patch_path.suffix.lower() == ".zip":
+                members = patch_members(patch_path)
+                if len(members) != 1:
+                    self.patch_preview.setPlainText(f"ZIP archive: {patch_path.name}\n" + "\n".join(members) + "\nSelect a patch when applying.")
+                    return
+                with extracted_patch(patch_path, members[0]) as extracted:
+                    text, truncated = read_patch_preview(extracted)
+            else:
+                text, truncated = read_patch_preview(patch_path)
+        except (FileNotFoundError, ValueError) as error:
             self.patch_preview.setPlainText(str(error))
             if not silent:
                 self._append_log(f"Cannot preview patch: {error}")
@@ -1446,7 +1501,7 @@ class MainWindow(QMainWindow):
 
             if session.patch_dir:
                 patch_dir = Path(session.patch_dir).expanduser()
-                patches.update(item.path for item in list_patch_files(patch_dir))
+                patches.update(item.path for item in list_patch_files(patch_dir, include_zip=session.accept_zip_patches))
 
         response = QMessageBox.question(
             self.settings_dialog,
@@ -1514,7 +1569,7 @@ class MainWindow(QMainWindow):
 
         packs = [item.path for item in list_pack_archives(self._repo_info.root)]
         patch_dir = Path(self.patch_dir_edit.text().strip()).expanduser()
-        patches = [item.path for item in list_patch_files(patch_dir)]
+        patches = [item.path for item in list_patch_files(patch_dir, include_zip=self.accept_zip_patches_check.isChecked())]
 
         export_dir_text = self.export_dir_edit.text().strip()
         exported_packs: list[Path] = []
@@ -1677,8 +1732,11 @@ class MainWindow(QMainWindow):
         self._append_log(f"Checking patch:\n  {patch_path}")
 
         try:
-            result = check_latest_patch(self._repo_info.root, patch_dir, patch_path=patch_path)
-        except FileNotFoundError as error:
+            with self._resolved_patch(patch_path) as resolved:
+                if resolved is None:
+                    return
+                result = check_latest_patch(self._repo_info.root, patch_dir, patch_path=resolved)
+        except (FileNotFoundError, ValueError) as error:
             self._append_log(f"Cannot check patch: {error}")
             self.statusBar().showMessage("Patch check failed")
             return
@@ -1736,17 +1794,17 @@ class MainWindow(QMainWindow):
             self._append_log("Apply commit message is set: PackPatch apply will create a local commit.")
 
         try:
-            result = apply_latest_patch(
-                self._repo_info.root,
-                patch_dir,
-                dry_run=dry_run,
-                commit_message=commit_message,
-                patch_path=patch_path,
-                apply_mode=apply_mode,
-                compatch_cr_mode=str(self.compatch_cr_mode_combo.currentData() or COMPATCH_CR_AUTO),
-                allow_unversioned_files=self.allow_unversioned_apply_check.isChecked(),
-            )
-        except FileNotFoundError as error:
+            with self._resolved_patch(patch_path) as resolved:
+                if resolved is None:
+                    return
+                result = apply_latest_patch(
+                    self._repo_info.root, patch_dir, dry_run=dry_run,
+                    commit_message=commit_message, patch_path=resolved,
+                    apply_mode=apply_mode,
+                    compatch_cr_mode=str(self.compatch_cr_mode_combo.currentData() or COMPATCH_CR_AUTO),
+                    allow_unversioned_files=self.allow_unversioned_apply_check.isChecked(),
+                )
+        except (FileNotFoundError, ValueError) as error:
             self._append_log(f"Cannot apply patch: {error}")
             self.statusBar().showMessage("Patch apply failed")
             return

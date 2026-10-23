@@ -266,3 +266,33 @@ def test_clear_all_session_files_deletes_unique_artifacts_and_preserves_sessions
     assert window._session_store.get_session("alpha") is not None
     assert window._session_store.get_session("beta") is not None
     assert "all saved sessions processed" in window.log.toPlainText()
+
+
+def test_zip_patch_setting_controls_listing_and_persists(window: MainWindow, tmp_path: Path) -> None:
+    import zipfile
+
+    archive = tmp_path / "fix.zip"
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr("fix.patch", "sample patch")
+    window.patch_dir_edit.setText(str(tmp_path))
+    window.accept_zip_patches_check.setChecked(True)
+    window._refresh_artifact_lists()
+    assert window.patch_list.count() == 1
+    assert window._snapshot_session().accept_zip_patches is True
+
+    window.accept_zip_patches_check.setChecked(False)
+    assert window.patch_list.count() == 0
+    assert window._snapshot_session().accept_zip_patches is False
+
+
+def test_zip_patch_resolves_member_until_action_finishes(window: MainWindow, tmp_path: Path) -> None:
+    import zipfile
+
+    archive = tmp_path / "fix.zip"
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr("nested/fix.patch", "patch body")
+    with window._resolved_patch(archive) as resolved:
+        assert resolved is not None
+        assert resolved.read_text() == "patch body"
+        extracted_path = resolved
+    assert not extracted_path.exists()

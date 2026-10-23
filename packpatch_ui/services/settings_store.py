@@ -27,6 +27,7 @@ class AppSession:
     patch_target_mode: str = "latest"
     apply_mode: str = "compatch_then_packpatch"
     compatch_cr_mode: str = "auto"
+    accept_zip_patches: bool = True
     allow_unversioned_apply: bool = False
     stash_changes_after_undo: bool = False
     auto_export_pack: bool = False
@@ -66,6 +67,7 @@ class AppSession:
             commit_message=str(data.get("commit_message") or ""),
             patch_target_mode=str(data.get("patch_target_mode") or "latest"),
             apply_mode=str(data.get("apply_mode") or "compatch_then_packpatch"),
+            accept_zip_patches=bool(data.get("accept_zip_patches", True)),
             compatch_cr_mode=str(data.get("compatch_cr_mode") or "auto") if str(data.get("compatch_cr_mode") or "auto") in ("normal", "keep_cr", "auto") else "auto",
             allow_unversioned_apply=bool(data.get("allow_unversioned_apply", False)),
             stash_changes_after_undo=bool(data.get("stash_changes_after_undo", False)),

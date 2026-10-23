@@ -50,7 +50,8 @@ Packs are created with `tools/pack-for-chatgpt.sh` and stored in `chatgpt-packs/
 ### Patch workflow
 
 - list latest pack archives;
-- list patch files from the configured patch directory;
+- list `.patch` and `.diff` files from the configured patch directory, plus ZIP archives when `Settings → Apply → Accept patches from ZIP archives` is enabled (default);
+- use the only patch inside a ZIP automatically, or choose from multiple patches; extraction is temporary and limited to the selected safe member;
 - check latest PackPatch files with `git apply --check`;
 - apply patch files with selectable PackPatch/Compatсh strategy;
 - fallback support between `git am` and `git apply`;
@@ -87,7 +88,7 @@ A session remembers:
 - window geometry;
 - per-session log verbosity.
 
-Settings also cover pack history depth, key/certificate inclusion, unversioned-file inclusion, automatic pack creation after successful apply, apply strategy, unversioned apply safety, repository watching, stash-after-undo, and automatic deploy after commit.
+Settings also cover ZIP patch support (per session), pack history depth, key/certificate inclusion, unversioned-file inclusion, automatic pack creation after successful apply, apply strategy, unversioned apply safety, repository watching, stash-after-undo, and automatic deploy after commit.
 
 Session data is stored under the user config directory, for example:
 
