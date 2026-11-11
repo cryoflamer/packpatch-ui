@@ -22,6 +22,7 @@ def test_app_session_defaults_match_current_workflow() -> None:
     assert session.watch_repository_state
     assert not session.include_sensitive_files
     assert not session.include_unversioned_files
+    assert not session.auto_push_after_apply
 
 
 def test_app_session_from_dict_migrates_legacy_and_ignores_extra_fields() -> None:
@@ -62,6 +63,7 @@ def test_app_session_roundtrip_preserves_all_current_fields() -> None:
         export_dir="/exports",
         deploy_dir="/deploy",
         auto_deploy_after_commit=True,
+        auto_push_after_apply=True,
         watch_repository_state=False,
         selected_files=["src", "README.md"],
         file_filter="*.py",

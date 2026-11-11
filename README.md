@@ -79,6 +79,18 @@ The UI also includes:
 - `Undo last commit`, implemented as `git reset --mixed HEAD~1`;
 - optional stash after undo, including unversioned files.
 
+### Git push
+
+`Git commits → Push` confirms the configured upstream before pushing only the current
+branch, without force or upstream creation. `Settings → Repository → Auto push after
+successful apply` is off by default and saved per session. It runs only when the UI's
+`Apply patch` creates a **new local commit**; dry-runs, failed or already-applied patches,
+and PackPatch applications without a commit never trigger it. Ordinary commits made
+outside the UI do not trigger auto push. A failed push does not roll back the local commit.
+
+An upstream must already be configured (for example by a one-time manual
+`git push -u origin main`). Pushes run non-interactively with a 30-second timeout.
+
 ### Sessions
 
 Sessions are saved locally and autosaved while the UI is used.

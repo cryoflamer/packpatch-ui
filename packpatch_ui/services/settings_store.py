@@ -38,6 +38,7 @@ class AppSession:
     export_dir: str = ""
     deploy_dir: str = ""
     auto_deploy_after_commit: bool = False
+    auto_push_after_apply: bool = False
     watch_repository_state: bool = True
     selected_files: list[str] = field(default_factory=list)
     file_filter: str = ""
@@ -79,6 +80,7 @@ class AppSession:
             export_dir=str(data.get("export_dir") or ""),
             deploy_dir=str(data.get("deploy_dir") or ""),
             auto_deploy_after_commit=bool(data.get("auto_deploy_after_commit", False)),
+            auto_push_after_apply=bool(data.get("auto_push_after_apply", False)),
             watch_repository_state=bool(data.get("watch_repository_state", True)),
             selected_files=[str(path) for path in selected_files if str(path)],
             file_filter=str(data.get("file_filter") or ""),

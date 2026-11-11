@@ -35,6 +35,8 @@
   "patch.preview": "Read-only preview of the selected patch. Large patches are truncated for UI responsiveness.",
   "commit.message": "Optional commit message used only when applying a PackPatch via git apply. Compatсh patches carry their own commit message.",
   "commit.list": "Recent git commits from the selected repository.",
+  "commit.push": "Push only the current branch to its configured upstream. Confirmation is required; no force push, new upstream or other branches.",
+  "commit.auto_push": "After Apply patch successfully creates a new commit, push the current branch to its existing remote upstream. Off by default. A failed push leaves the local commit intact.",
   "commit.refresh": "Refresh the recent commits list.",
   "commit.copy_hash": "Copy the selected commit hash to the clipboard.",
   "commit.undo": "Undo the last local commit with git reset --mixed HEAD~1. Depending on Settings, resulting tracked and unversioned changes can then be stashed.",

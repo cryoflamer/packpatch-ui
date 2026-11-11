@@ -545,3 +545,101 @@ def test_export_new_pack_rename_failure_preserves_existing_file(
     assert not list(export_dir.glob(".packpatch-export-*"))
     assert not (repo / "chatgpt-packs").exists()
     assert window.statusBar().currentMessage() == "Pack export failed"
+
+
+def test_auto_push_setting_defaults_off_and_persists_per_session(window: MainWindow) -> None:
+    assert not window.auto_push_after_apply_check.isChecked()
+    window.auto_push_after_apply_check.setChecked(True)
+    stored = window._current_session_snapshot("push-enabled")
+    assert stored.auto_push_after_apply is True
+    window._session_store.upsert_session(stored)
+    window.auto_push_after_apply_check.setChecked(False)
+    window._current_session_name = "push-enabled"
+    window._load_current_session()
+    assert window.auto_push_after_apply_check.isChecked()
+
+
+def test_manual_push_requires_confirmation_and_uses_confirmed_target(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from packpatch_ui.core.git_push import PushResult, PushTarget
+
+    window._repo_info = GitRepoInfo(root=tmp_path, branch="main", is_dirty=False)
+    target = PushTarget("main", "origin", "refs/heads/main")
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_target", lambda *_: target)
+    pushed = []
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.push_current_branch",
+        lambda root, *, expected_target=None: (pushed.append((root, expected_target)) or PushResult(True, "Pushed.")),
+    )
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+    window._push_manually()
+    assert pushed == []
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    window._push_manually()
+    assert pushed == [(tmp_path, target)]
+    assert "Pushed." in window.log.toPlainText() or window.statusBar().currentMessage() == "Push completed"
+
+
+@pytest.mark.parametrize(
+    "succeeded,dry_run,created_commit,was_applied,expected_push",
+    [
+        (True, False, True, True, 1),
+        (True, False, False, True, 0),
+        (True, True, True, True, 0),
+        (True, False, True, False, 0),
+        (False, False, True, True, 0),
+    ],
+)
+def test_auto_push_only_for_new_commit_created_by_apply(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    succeeded: bool, dry_run: bool, created_commit: bool, was_applied: bool, expected_push: int,
+) -> None:
+    window._repo_info = GitRepoInfo(root=tmp_path, branch="main", is_dirty=False)
+    window.auto_push_after_apply_check.setChecked(True)
+    (tmp_path / "test.patch").write_text("test", encoding="utf-8")
+    window.patch_dir_edit.setText(str(tmp_path))
+    calls = []
+    monkeypatch.setattr("packpatch_ui.ui.main_window.apply_latest_patch", lambda *args, **kwargs: SimpleNamespace(
+        succeeded=succeeded, created_commit=created_commit, was_applied=was_applied,
+        applied_with="Compatсh", command=["git", "am"], stdout="", stderr="", returncode=1,
+    ))
+    monkeypatch.setattr(window, "_auto_deploy_after_commit", lambda: None)
+    monkeypatch.setattr(window, "_auto_create_pack_after_apply", lambda: None)
+    monkeypatch.setattr(window, "_auto_push_after_commit", lambda: calls.append("push"))
+    monkeypatch.setattr(window, "_refresh_repository_status", lambda *args, **kwargs: None)
+    window._apply_latest_patch(dry_run=dry_run)
+    assert calls == ["push"] * expected_push
+
+
+def test_auto_push_failure_does_not_change_apply_result(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from packpatch_ui.core.git_push import PushResult, PushTarget
+
+    window._repo_info = GitRepoInfo(root=tmp_path, branch="main", is_dirty=False)
+    window.auto_push_after_apply_check.setChecked(True)
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_target", lambda *_:
+                        PushTarget("main", "origin", "refs/heads/main"))
+    monkeypatch.setattr("packpatch_ui.ui.main_window.push_current_branch", lambda *args, **kwargs:
+                        PushResult(False, "No upstream configured"))
+    window._auto_push_after_commit()
+    assert "Auto push failed: No upstream configured" in window.log.toPlainText()
+    assert not window._push_busy
+
+
+def test_auto_push_without_upstream_is_skipped(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from packpatch_ui.core.git_push import PushUnavailable
+
+    window._repo_info = GitRepoInfo(root=tmp_path, branch="main", is_dirty=False)
+    window.auto_push_after_apply_check.setChecked(True)
+    def no_upstream(*args):
+        raise PushUnavailable("No upstream")
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_target", no_upstream)
+    monkeypatch.setattr("packpatch_ui.ui.main_window.push_current_branch", lambda *args, **kwargs:
+                        pytest.fail("git push should not run without an upstream"))
+    window._auto_push_after_commit()
+    assert "Auto push skipped: No upstream" in window.log.toPlainText()
