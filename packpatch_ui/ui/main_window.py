@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import html
+import os
 import shutil
+import tempfile
 from contextlib import contextmanager
 from typing import Iterator
 from dataclasses import dataclass
@@ -138,7 +140,8 @@ class MainWindow(QMainWindow):
         self.task_name_edit = QLineEdit(self)
         self.task_name_edit.setPlaceholderText("Pack name, e.g. packpatch, vpn, ias")
         self.create_pack_button = QPushButton("Create pack", self)
-        self.export_pack_button = QPushButton("Export pack", self)
+        self.export_new_pack_button = QPushButton("Export new pack", self)
+        self.export_pack_button = QPushButton("Export selected", self)
 
         self.auto_export_pack_check = QCheckBox("Auto export pack", self)
         self.include_sensitive_files_check = QCheckBox("Include keys/certs", self)
@@ -297,7 +300,7 @@ class MainWindow(QMainWindow):
         pack_controls.addWidget(QLabel("Pack name:", widget))
         pack_controls.addWidget(self.task_name_edit, stretch=1)
         pack_controls.addWidget(self.create_pack_button)
-        pack_controls.addWidget(self.export_pack_button)
+        pack_controls.addWidget(self.export_new_pack_button)
 
         export_controls = QHBoxLayout()
         export_controls.addWidget(QLabel("Export dir:", widget))
@@ -336,6 +339,7 @@ class MainWindow(QMainWindow):
         pack_column.setContentsMargins(0, 0, 0, 0)
         pack_column.setSpacing(4)
         pack_actions = QHBoxLayout()
+        pack_actions.addWidget(self.export_pack_button)
         pack_actions.addWidget(self.copy_pack_path_button)
         pack_actions.addWidget(self.show_pack_in_explorer_button)
         pack_actions.addWidget(self.delete_pack_button)
@@ -461,6 +465,7 @@ class MainWindow(QMainWindow):
             self.pack_mode_combo: "pack.mode",
             self.task_name_edit: "pack.task",
             self.create_pack_button: "pack.create",
+            self.export_new_pack_button: "pack.export_new",
             self.export_pack_button: "pack.export",
             self.auto_export_pack_check: "pack.auto_export",
             self.include_sensitive_files_check: "pack.include_sensitive",
@@ -570,6 +575,7 @@ class MainWindow(QMainWindow):
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
         self.create_pack_button.clicked.connect(self._create_pack)
+        self.export_new_pack_button.clicked.connect(self._export_new_pack)
         self.export_pack_button.clicked.connect(self._export_selected_pack)
         self.pack_list.itemSelectionChanged.connect(self._refresh_export_pack_button)
         self.browse_patch_dir_button.clicked.connect(self._browse_patch_directory)
@@ -1145,6 +1151,8 @@ class MainWindow(QMainWindow):
         any_busy = self._pack_busy or self._apply_busy
 
         self.create_pack_button.setEnabled(not any_busy)
+        self.export_new_pack_button.setEnabled(not any_busy)
+        self.export_new_pack_button.setText("Exporting..." if self._pack_busy else "Export new pack")
         self._refresh_export_pack_button()
         self.create_pack_button.setText("Creating..." if self._pack_busy else "Create pack")
 
@@ -1226,8 +1234,94 @@ class MainWindow(QMainWindow):
         self._append_log(f"Exported pack:\n  {destination}", verbosity=LogVerbosity.STATUS)
         self.statusBar().showMessage("Pack exported")
 
+    def _export_new_pack(self) -> None:
+        """Create a fresh pack directly for export, without retaining a local copy."""
+        if self._pack_busy or self._apply_busy:
+            return
+        self._set_pack_busy(True)
+        try:
+            self._export_new_pack_impl()
+        finally:
+            self._set_pack_busy(False)
+
+    def _export_new_pack_impl(self) -> None:
+        if self._repo_info is None:
+            self._append_log("Cannot export new pack: no git repository selected.")
+            self.statusBar().showMessage("No git repository selected")
+            return
+
+        export_dir_text = self.export_dir_edit.text().strip()
+        if not export_dir_text:
+            self._append_log("Cannot export new pack: export directory is empty.")
+            self.statusBar().showMessage("Export directory is empty")
+            return
+
+        export_dir = Path(export_dir_text).expanduser()
+        try:
+            export_dir.mkdir(parents=True, exist_ok=True)
+            # Stage on the destination filesystem so the final rename is atomic.
+            with tempfile.TemporaryDirectory(prefix=".packpatch-export-", dir=export_dir) as staging_dir:
+                mode = self._current_pack_mode()
+                task_name = self._ensure_task_name_for_mode(mode)
+                self._append_log(f"Creating export-only pack with mode: {PACK_MODE_LABELS.get(mode, mode)}...")
+                result = create_pack(
+                    self._repo_info.root,
+                    mode,
+                    task_name,
+                    self.file_tree.selected_paths(),
+                    include_sensitive=self.include_sensitive_files_check.isChecked(),
+                    include_unversioned=self.include_unversioned_files_check.isChecked(),
+                    history_depth=self.git_history_depth_spin.value(),
+                    output_dir=Path(staging_dir),
+                )
+
+                self._append_log("Command:", verbosity=LogVerbosity.DEBUG)
+                self._append_log("  " + " ".join(result.command), verbosity=LogVerbosity.DEBUG)
+                if result.stdout.strip():
+                    self._append_log(result.stdout.strip(), verbosity=LogVerbosity.DEBUG)
+                if result.stderr.strip():
+                    self._append_log(result.stderr.strip(), verbosity=LogVerbosity.DEBUG)
+
+                if not result.succeeded:
+                    self._append_log(
+                        f"Pack export failed with exit code {result.returncode}.",
+                        verbosity=LogVerbosity.STATUS,
+                        severity=LogSeverity.ERROR,
+                    )
+                    self.statusBar().showMessage("Pack export failed")
+                    return
+
+                archive = result.archive_path
+                if archive is None or archive.is_symlink() or archive.parent.resolve() != Path(staging_dir).resolve():
+                    self._append_log("Pack export failed: created archive not found in staging directory.")
+                    self.statusBar().showMessage("Pack export failed")
+                    return
+                destination = export_dir / archive.name
+                if destination.exists() or destination.is_symlink():
+                    if not destination.is_file() or destination.is_symlink():
+                        self._append_log(f"Cannot export pack: destination is not a regular file:\n  {destination}")
+                        self.statusBar().showMessage("Pack export failed")
+                        return
+                    answer = QMessageBox.question(
+                        self,
+                        "Overwrite exported pack?",
+                        f"The export destination already contains {archive.name}.\n\nOverwrite it?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No,
+                    )
+                    if answer != QMessageBox.StandardButton.Yes:
+                        self.statusBar().showMessage("Pack export cancelled")
+                        return
+
+                os.replace(archive, destination)
+                self._append_log(f"Exported new pack:\n  {destination}", verbosity=LogVerbosity.STATUS)
+                self.statusBar().showMessage("New pack exported")
+        except (OSError, FileNotFoundError, ValueError) as error:
+            self._append_log(f"Cannot export new pack: {error}", severity=LogSeverity.ERROR)
+            self.statusBar().showMessage("Pack export failed")
+
     def _create_pack(self) -> None:
-        if self._pack_busy:
+        if self._pack_busy or self._apply_busy:
             return
 
         self._set_pack_busy(True)

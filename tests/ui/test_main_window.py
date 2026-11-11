@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import subprocess
 from pathlib import Path
 
@@ -7,6 +8,7 @@ import pytest
 from PySide6.QtWidgets import QMessageBox
 
 from packpatch_ui.core.git_repo import GitRepoInfo
+from packpatch_ui.core.pack_runner import PackResult
 from packpatch_ui.services.settings_store import AppSession
 from packpatch_ui.ui.main_window import LogSeverity, LogVerbosity, MainWindow
 
@@ -382,3 +384,164 @@ def test_manual_export_button_disabled_during_pack_and_apply(window: MainWindow,
     assert not window.export_pack_button.isEnabled()
     window._set_apply_busy(False)
     assert window.export_pack_button.isEnabled()
+
+
+def test_export_new_pack_creates_export_only_with_current_settings(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = init_repo(tmp_path / "fresh-export-repo")
+    export_dir = tmp_path / "fresh-exports"
+    window._repo_info = GitRepoInfo(root=repo, branch="main", is_dirty=False)
+    window.export_dir_edit.setText(str(export_dir))
+    window.auto_export_pack_check.setChecked(False)
+    window.git_history_depth_spin.setValue(3)
+    window.include_sensitive_files_check.setChecked(True)
+    window.task_name_edit.setText("on-demand")
+    window.pack_mode_combo.setCurrentIndex(window.pack_mode_combo.findData("full"))
+    seen = []
+
+    def fake_create_pack(root, mode, task, selected, **kwargs):
+        assert root == repo
+        assert mode == "full"
+        assert task == "on-demand"
+        assert kwargs["history_depth"] == 3
+        assert kwargs["include_sensitive"] is True
+        assert kwargs["include_unversioned"] is False
+        output_dir = kwargs["output_dir"]
+        assert output_dir.is_dir()
+        assert output_dir.parent == export_dir
+        archive = output_dir / "chatgpt-pack-full-on-demand-20261111-1000.tar.gz"
+        archive.write_bytes(b"fresh export only")
+        seen.append(output_dir)
+        return PackResult(command=["bash", "pack"], returncode=0, stdout=str(archive), stderr="")
+
+    monkeypatch.setattr("packpatch_ui.ui.main_window.create_pack", fake_create_pack)
+    window.export_new_pack_button.click()
+
+    target = export_dir / "chatgpt-pack-full-on-demand-20261111-1000.tar.gz"
+    assert target.read_bytes() == b"fresh export only"
+    assert not (repo / "chatgpt-packs").exists()
+    assert not seen[0].exists()  # temporary archive and directory were removed
+    assert window.pack_list.count() == 0
+    assert window.statusBar().currentMessage() == "New pack exported"
+    assert window.export_new_pack_button.isEnabled()
+    assert window.export_new_pack_button.text() == "Export new pack"
+
+
+@pytest.mark.parametrize("accept,expected", [(False, b"existing"), (True, b"new")])
+def test_export_new_pack_requires_confirmation_before_overwriting(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, accept: bool, expected: bytes
+) -> None:
+    repo = init_repo(tmp_path / "overwrite-repo")
+    export_dir = tmp_path / "overwrite-exports"
+    export_dir.mkdir()
+    filename = "chatgpt-pack-full-demo-20261111-1000.tar.gz"
+    destination = export_dir / filename
+    destination.write_bytes(b"existing")
+    window._repo_info = GitRepoInfo(root=repo, branch="main", is_dirty=False)
+    window.export_dir_edit.setText(str(export_dir))
+
+    def fake_create_pack(root, mode, task, selected, **kwargs):
+        archive = kwargs["output_dir"] / filename
+        archive.write_bytes(b"new")
+        return PackResult(["bash", "pack"], 0, str(archive), "")
+
+    monkeypatch.setattr("packpatch_ui.ui.main_window.create_pack", fake_create_pack)
+    responses = []
+
+    def answer(*args, **kwargs):
+        responses.append(True)
+        return QMessageBox.StandardButton.Yes if accept else QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", answer)
+    window.export_new_pack_button.click()
+    assert responses == [True]
+    assert destination.read_bytes() == expected
+    assert not list(export_dir.glob(".packpatch-export-*"))
+    assert not (repo / "chatgpt-packs").exists()
+    assert window.statusBar().currentMessage() == ("New pack exported" if accept else "Pack export cancelled")
+
+
+def test_export_new_pack_failure_leaves_no_local_or_partial_export(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = init_repo(tmp_path / "failed-repo")
+    export_dir = tmp_path / "failed-export"
+    window._repo_info = GitRepoInfo(root=repo, branch="main", is_dirty=False)
+    window.export_dir_edit.setText(str(export_dir))
+
+    def fake_create_pack(root, mode, task, selected, **kwargs):
+        partial = kwargs["output_dir"] / "partial.tar.gz"
+        partial.write_bytes(b"partial")
+        return PackResult(["bash", "pack"], 1, "", "failure")
+
+    monkeypatch.setattr("packpatch_ui.ui.main_window.create_pack", fake_create_pack)
+    window.export_new_pack_button.click()
+    assert list(export_dir.iterdir()) == []
+    assert not (repo / "chatgpt-packs").exists()
+    assert window.statusBar().currentMessage() == "Pack export failed"
+
+
+def test_export_new_pack_requires_export_dir(window: MainWindow, tmp_path: Path) -> None:
+    repo = init_repo(tmp_path / "missing-export-repo")
+    window._repo_info = GitRepoInfo(root=repo, branch="main", is_dirty=False)
+    window.export_dir_edit.clear()
+    window.export_new_pack_button.click()
+    assert window.statusBar().currentMessage() == "Export directory is empty"
+    assert not (repo / "chatgpt-packs").exists()
+
+
+def test_export_new_pack_button_disabled_during_create_and_apply(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert window.export_new_pack_button.isEnabled()
+    window._set_pack_busy(True)
+    assert not window.export_new_pack_button.isEnabled()
+    assert window.export_new_pack_button.text() == "Exporting..."
+    window._set_pack_busy(False)
+    window._set_apply_busy(True)
+    assert not window.export_new_pack_button.isEnabled()
+    window._set_apply_busy(False)
+    assert window.export_new_pack_button.isEnabled()
+    assert window.export_new_pack_button.text() == "Export new pack"
+
+    def fake_impl():
+        assert not window.export_new_pack_button.isEnabled()
+        raise RuntimeError("export failure")
+
+    monkeypatch.setattr(window, "_export_new_pack_impl", fake_impl)
+    with pytest.raises(RuntimeError, match="export failure"):
+        window._export_new_pack()
+    assert window.export_new_pack_button.isEnabled()
+
+
+def test_export_new_pack_rename_failure_preserves_existing_file(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = init_repo(tmp_path / "rename-repo")
+    export_dir = tmp_path / "rename-exports"
+    export_dir.mkdir()
+    filename = "chatgpt-pack-full-demo-20261111-1000.tar.gz"
+    destination = export_dir / filename
+    destination.write_bytes(b"previous")
+    window._repo_info = GitRepoInfo(root=repo, branch="main", is_dirty=False)
+    window.export_dir_edit.setText(str(export_dir))
+
+    def fake_create_pack(root, mode, task, selected, **kwargs):
+        archive = kwargs["output_dir"] / filename
+        archive.write_bytes(b"new")
+        return PackResult(["bash", "pack"], 0, str(archive), "")
+
+    monkeypatch.setattr("packpatch_ui.ui.main_window.create_pack", fake_create_pack)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **kw: QMessageBox.StandardButton.Yes)
+
+    def fail_replace(source, target):
+        raise OSError("simulated rename error")
+
+    monkeypatch.setattr("packpatch_ui.ui.main_window.os", SimpleNamespace(replace=fail_replace))
+    window.export_new_pack_button.click()
+
+    assert destination.read_bytes() == b"previous"
+    assert not list(export_dir.glob(".packpatch-export-*"))
+    assert not (repo / "chatgpt-packs").exists()
+    assert window.statusBar().currentMessage() == "Pack export failed"

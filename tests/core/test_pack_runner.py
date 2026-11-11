@@ -294,3 +294,24 @@ def test_slice_pack_requires_a_selected_path(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Select at least one file"):
         create_pack(repo, "slice", "pack-tests", [], history_depth=1)
+
+
+def test_pack_can_be_created_in_explicit_output_directory_without_local_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = init_repo(tmp_path)
+    destination = tmp_path / "export-only"
+    # Explicit output directory must take precedence over the inherited setting.
+    monkeypatch.setenv("CHATGPT_PACK_OUT_DIR", str(tmp_path / "other-output"))
+
+    result = create_pack(repo, "full", "export-on-demand", [], history_depth=1, output_dir=destination)
+
+    assert result.succeeded, result.stderr
+    assert result.archive_path is not None
+    assert result.archive_path.parent == destination
+    assert result.archive_path.is_file()
+    assert not (repo / "chatgpt-packs").exists()
+    assert not (tmp_path / "other-output").exists()
+    pack = unpack_archive(result.archive_path, tmp_path)
+    assert (pack / "README.md").read_text(encoding="utf-8") == "base\n"
+    assert git(pack, "rev-parse", "HEAD").stdout.strip() == git(repo, "rev-parse", "HEAD").stdout.strip()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Sequence
 
@@ -69,6 +70,7 @@ def create_pack(
     include_sensitive: bool = False,
     include_unversioned: bool = False,
     history_depth: int = 1,
+    output_dir: Path | None = None,
 ) -> PackResult:
     """Create a PackPatch archive for *mode* inside *repo_root*."""
     cleaned_task = task_name.strip() or default_task_name_for_mode(mode)
@@ -95,7 +97,13 @@ def create_pack(
     else:
         raise ValueError(f"Unsupported pack mode: {mode}")
 
-    result = run_process(command, cwd=repo_root, check=False)
+    # The pack script supports an explicit output directory.  Passing it in the
+    # subprocess environment lets one-off exports avoid repo/chatgpt-packs.
+    env = None
+    if output_dir is not None:
+        env = dict(os.environ)
+        env["CHATGPT_PACK_OUT_DIR"] = str(output_dir.expanduser().resolve())
+    result = run_process(command, cwd=repo_root, check=False, env=env)
     return PackResult(
         command=command,
         returncode=result.returncode,

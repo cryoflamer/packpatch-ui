@@ -37,7 +37,13 @@ Supported pack modes:
 
 `Git history depth` in Settings controls how many real source commits are preserved in every UI-created pack. The default and minimum UI value is `1`, so the real source `HEAD` is always preserved. The lower-level CLI still supports `--history-depth 0` for a synthetic disposable base.
 
-Packs are created with `tools/pack-for-chatgpt.sh` and stored in `chatgpt-packs/`.
+Packs are created with `tools/pack-for-chatgpt.sh`. The UI offers three manual operations:
+
+- **Create pack** — store a pack in the repository's `chatgpt-packs/` directory, and also copy it to `Export dir` if `Auto export pack` is enabled.
+- **Export new pack** — build a fresh pack with the current mode, file selection, and history settings directly for `Export dir`, leaving no local archive in `chatgpt-packs/`. It works with `Auto export pack` disabled, stages the archive in `Export dir`, and confirms before replacing an existing export.
+- **Export selected** — copy one existing local pack from `Latest packs` into `Export dir` without creating another pack.
+
+`Create pack after successful apply` remains optional and can be disabled for export-on-demand workflows.
 
 ### File selection
 
@@ -134,11 +140,7 @@ Use the file tree, filter, directory checkboxes, or `Select changed`.
 
 Choose `Pack mode`, set or accept the pack name, configure `Git history depth` in Settings if needed, then click `Create pack`.
 
-The archive appears in:
-
-```text
-chatgpt-packs/
-```
+`Create pack` stores the archive in `chatgpt-packs/`. Alternatively, click `Export new pack` to place the new archive only in `Export dir`, without leaving a local copy. Use `Export selected` in `Latest packs` to export an existing local archive.
 
 ### 4. Send pack to ChatGPT
 

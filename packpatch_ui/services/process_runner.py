@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 
-def run_process(command: Sequence[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+def run_process(
+    command: Sequence[str],
+    cwd: Path | None = None,
+    check: bool = True,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     """Run *command* and capture text output."""
     return subprocess.run(
         list(command),
@@ -15,4 +21,5 @@ def run_process(command: Sequence[str], cwd: Path | None = None, check: bool = T
         check=check,
         text=True,
         capture_output=True,
+        env=env,
     )
