@@ -7,9 +7,16 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QDialog, QFileDialog, QWidget
 
 
+def _can_position_top_level_windows() -> bool:
+    return not QGuiApplication.platformName().startswith("wayland")
+
+
 def center_dialog(dialog: QDialog, owner: QWidget) -> None:
     """Center a visible dialog over its owner and keep it on the owner's screen."""
     if not dialog.isVisible() or not owner.isVisible():
+        return
+    # XDG Shell does not permit clients to place top-level Wayland windows.
+    if not _can_position_top_level_windows():
         return
     screen = owner.windowHandle().screen() if owner.windowHandle() else None
     if screen is None:
@@ -39,7 +46,7 @@ class DialogPositioningFilter(QObject):
     """Center Qt dialogs owned by one main window, including static message boxes.
 
     A queued placement runs after Qt has computed dialog layout and frame size.
-    Native file pickers are deliberately excluded.
+    Native file pickers cannot be positioned here; app-owned Qt pickers can.
     """
 
     def __init__(self, owner: QWidget) -> None:
@@ -49,7 +56,7 @@ class DialogPositioningFilter(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         if event.type() != QEvent.Type.Show or not isinstance(watched, QDialog):
             return False
-        if isinstance(watched, QFileDialog):
+        if isinstance(watched, QFileDialog) and not watched.testOption(QFileDialog.Option.DontUseNativeDialog):
             return False
         ancestor = watched.parentWidget()
         while ancestor is not None and ancestor is not self.owner:
@@ -57,3 +64,17 @@ class DialogPositioningFilter(QObject):
         if ancestor is self.owner:
             QTimer.singleShot(0, lambda dialog=watched: center_dialog(dialog, self.owner))
         return False
+
+
+def choose_directory(owner: QWidget, title: str) -> str:
+    """Open a Qt-owned directory picker so it follows normal dialog placement."""
+    picker = QFileDialog(owner)
+    # Must be set before changing other properties to avoid the native picker.
+    picker.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    picker.setFileMode(QFileDialog.FileMode.Directory)
+    picker.setOption(QFileDialog.Option.ShowDirsOnly, True)
+    picker.setWindowTitle(title)
+    if picker.exec() != QDialog.DialogCode.Accepted:
+        return ""
+    paths = picker.selectedFiles()
+    return paths[0] if paths else ""

@@ -151,6 +151,19 @@ From the repository root:
 python -m packpatch_ui
 ```
 
+On **WSLg**, the launcher prefers Qt's X11/XWayland backend (`xcb;wayland`)
+when both display sockets are available. XDG Shell/Wayland cannot honor an
+application's requests to place top-level dialogs, so this choice allows
+PackPatch's Qt dialogs to be centered over its main window. The directory
+pickers use Qt's widget-based dialog instead of the platform-native picker
+for consistent placement. Other Linux desktops and Windows are unchanged.
+
+An explicit `QT_QPA_PLATFORM` setting always takes precedence. For example,
+`QT_QPA_PLATFORM=wayland python -m packpatch_ui` keeps native Wayland window
+management, but the compositor (not PackPatch) controls dialog positions.
+If your system has an unusable XCB plugin, use this override to launch with
+Wayland.
+
 ## Basic workflow
 
 ### 1. Select a repository

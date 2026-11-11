@@ -912,3 +912,25 @@ def test_new_session_can_use_defaults(window: MainWindow, monkeypatch: pytest.Mo
     assert new.pack_mode == "slice"
     assert new.repo_path == ""
     assert not new.auto_push_after_apply
+
+
+@pytest.mark.parametrize(
+    ("method", "edit_name", "title"),
+    [
+        ("_browse_repository", "repo_path_edit", "Select git repository"),
+        ("_browse_export_directory", "export_dir_edit", "Select export directory"),
+        ("_browse_deploy_directory", "deploy_dir_edit", "Select deploy directory"),
+        ("_browse_patch_directory", "patch_dir_edit", "Select patch directory"),
+    ],
+)
+def test_browse_actions_use_owned_directory_picker(window, monkeypatch, method, edit_name, title):
+    seen = []
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.choose_directory",
+        lambda owner, caption: seen.append((owner, caption)) or "/tmp/selected-directory",
+    )
+    monkeypatch.setattr(window, "_refresh_repository_status", lambda *args, **kwargs: None)
+    monkeypatch.setattr(window, "_refresh_artifact_lists", lambda *args, **kwargs: None)
+    getattr(window, method)()
+    assert seen == [(window, title)]
+    assert getattr(window, edit_name).text() == "/tmp/selected-directory"

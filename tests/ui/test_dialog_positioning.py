@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QEvent
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QInputDialog, QMessageBox
 
 from packpatch_ui.ui.main_window import MainWindow
 import packpatch_ui.ui.dialog_positioning as placement
@@ -22,7 +22,7 @@ def window(qtbot, tmp_path, monkeypatch):
     return main
 
 
-@pytest.mark.parametrize("dialog_type", [QDialog, QMessageBox])
+@pytest.mark.parametrize("dialog_type", [QDialog, QMessageBox, QInputDialog])
 def test_dialog_is_centered_after_show(window, qtbot, dialog_type):
     dialog = dialog_type(window)
     qtbot.addWidget(dialog)
@@ -62,3 +62,53 @@ def test_unrelated_dialog_is_not_intercepted(window, monkeypatch):
     event_filter.eventFilter(dialog, QEvent(QEvent.Type.Show))
     QApplication.processEvents()
     assert recorded == []
+
+
+def test_qt_file_dialog_is_positioned(window, qtbot, monkeypatch):
+    recorded = []
+    monkeypatch.setattr(placement, "center_dialog", lambda *args: recorded.append(args))
+    dialog = QFileDialog(window)
+    dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitUntil(lambda: bool(recorded))
+    assert (dialog, window) in recorded
+
+
+def test_choose_directory_uses_qt_widget_picker(window, monkeypatch):
+    recorded = []
+
+    class Picker(QFileDialog):
+        def exec(self):
+            recorded.append((self.parentWidget(), self.windowTitle()))
+            assert self.testOption(QFileDialog.Option.DontUseNativeDialog)
+            assert self.testOption(QFileDialog.Option.ShowDirsOnly)
+            assert self.fileMode() == QFileDialog.FileMode.Directory
+            return QDialog.DialogCode.Accepted
+
+        def selectedFiles(self):  # noqa: N802
+            return ["/tmp/my-project"]
+
+    monkeypatch.setattr(placement, "QFileDialog", Picker)
+    assert placement.choose_directory(window, "Select git repository") == "/tmp/my-project"
+    assert recorded == [(window, "Select git repository")]
+
+
+def test_choose_directory_cancel_returns_empty(window, monkeypatch):
+    class Picker(QFileDialog):
+        def exec(self):
+            return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(placement, "QFileDialog", Picker)
+    assert placement.choose_directory(window, "Select patch directory") == ""
+
+
+def test_wayland_skips_unsupported_dialog_move(window, qtbot, monkeypatch):
+    dialog = QDialog(window)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    QApplication.processEvents()
+    previous = dialog.pos()
+    monkeypatch.setattr(placement, "_can_position_top_level_windows", lambda: False)
+    placement.center_dialog(dialog, window)
+    assert dialog.pos() == previous

@@ -17,7 +17,6 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
-    QFileDialog,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -72,7 +71,7 @@ from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAM
 from packpatch_ui.services.session_log_store import LogEntry, LogSeverity, LogVerbosity, SessionLogStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
-from packpatch_ui.ui.dialog_positioning import DialogPositioningFilter
+from packpatch_ui.ui.dialog_positioning import DialogPositioningFilter, choose_directory
 from packpatch_ui.ui.artifact_list import FileDragListWidget
 from packpatch_ui.ui.file_tree import FileTreeWidget
 from packpatch_ui.ui.settings_dialog import SettingsDialog
@@ -860,26 +859,26 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _browse_repository(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "Select git repository")
+        selected = choose_directory(self, "Select git repository")
         if selected:
             self.repo_path_edit.setText(selected)
             self._refresh_repository_status()
             self._schedule_autosave()
 
     def _browse_export_directory(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "Select export directory")
+        selected = choose_directory(self, "Select export directory")
         if selected:
             self.export_dir_edit.setText(selected)
             self._schedule_autosave()
 
     def _browse_deploy_directory(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "Select deploy directory")
+        selected = choose_directory(self, "Select deploy directory")
         if selected:
             self.deploy_dir_edit.setText(selected)
             self._schedule_autosave()
 
     def _browse_patch_directory(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "Select patch directory")
+        selected = choose_directory(self, "Select patch directory")
         if selected:
             self.patch_dir_edit.setText(selected)
             self._refresh_artifact_lists()
