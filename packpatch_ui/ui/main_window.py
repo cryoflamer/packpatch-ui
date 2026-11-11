@@ -72,6 +72,7 @@ from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAM
 from packpatch_ui.services.session_log_store import LogEntry, LogSeverity, LogVerbosity, SessionLogStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
+from packpatch_ui.ui.dialog_positioning import DialogPositioningFilter
 from packpatch_ui.ui.artifact_list import FileDragListWidget
 from packpatch_ui.ui.file_tree import FileTreeWidget
 from packpatch_ui.ui.settings_dialog import SettingsDialog
@@ -93,6 +94,8 @@ class MainWindow(QMainWindow):
         self._pack_busy = False
         self._apply_busy = False
         self._push_busy = False
+        self._dialog_positioning_filter = DialogPositioningFilter(self)
+        QApplication.instance().installEventFilter(self._dialog_positioning_filter)
 
         self.session_combo = QComboBox(self)
         self.new_session_button = QPushButton("New", self)
