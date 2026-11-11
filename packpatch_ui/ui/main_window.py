@@ -2196,7 +2196,15 @@ class MainWindow(QMainWindow):
         target_session = session_name if session_name is not None else self._current_session_name
         self._session_logs.append(target_session, entry)
         if target_session == self._current_session_name and self._log_entry_is_visible(entry):
-            self.log.append(self._render_log_entry(entry))
+            # QTextEdit.append() guesses whether text is HTML. For unstyled
+            # entries, escaped text such as "&gt;" may be shown literally.
+            # insertHtml() always parses the HTML escaped by _format_log_line.
+            cursor = self.log.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            if not self.log.document().isEmpty():
+                cursor.insertBlock()
+            cursor.insertHtml(self._render_log_entry(entry))
+            self.log.setTextCursor(cursor)
             self._scroll_log_to_bottom()
 
     def _clear_current_session_log(self) -> None:

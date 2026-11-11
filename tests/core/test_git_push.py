@@ -51,7 +51,7 @@ def test_push_only_current_tracking_branch_without_force_or_upstream_modificatio
     git(repo, "config", "push.default", "matching")
 
     target = current_push_target(repo)
-    assert target.description == "main -> origin/main"
+    assert target.description == "main → origin/main"
     result = push_current_branch(repo, expected_target=target)
 
     assert result.succeeded, result.stderr

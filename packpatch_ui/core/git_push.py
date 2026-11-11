@@ -27,7 +27,7 @@ class PushTarget:
 
     @property
     def description(self) -> str:
-        return f"{self.branch} -> {self.remote}/{self.destination_ref.removeprefix('refs/heads/')}"
+        return f"{self.branch} → {self.remote}/{self.destination_ref.removeprefix('refs/heads/')}"
 
 
 @dataclass(frozen=True)

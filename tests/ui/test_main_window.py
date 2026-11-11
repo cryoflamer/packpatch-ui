@@ -140,6 +140,38 @@ def test_switching_to_debug_rerenders_previously_hidden_entries(window: MainWind
     assert "hidden debug" in text
 
 
+def test_log_html_characters_render_as_text_on_append_and_restore(window: MainWindow) -> None:
+    # Both the incremental insert and the full re-render must decode escaped
+    # entities exactly once; user-provided HTML must never become markup.
+    messages = [
+        "Pushed main -> origin/main.",
+        "Author <user@example.invalid> & branch <main>",
+        'Raw <b>not bold</b> & \"quoted\"',
+    ]
+    window._set_log_verbosity("debug")
+    for message in messages:
+        window._append_log(message, verbosity=LogVerbosity.STATUS)
+
+    before = window.log.toPlainText()
+    for message in messages:
+        assert message in before
+    assert "&gt;" not in before
+    assert "&lt;" not in before
+    assert "&amp;" not in before
+
+    window._render_log_entries()
+    after = window.log.toPlainText()
+    assert after == before
+
+
+def test_log_push_success_arrow_and_html_special_characters(window: MainWindow) -> None:
+    message = "Pushed main → origin/main & checked <remote>."
+    window._append_log(message, verbosity=LogVerbosity.STATUS)
+    assert message in window.log.toPlainText()
+    window._render_log_entries()
+    assert message in window.log.toPlainText()
+
+
 def test_log_verbosity_is_restored_per_session(window: MainWindow) -> None:
     window._session_store.upsert_session(AppSession(name="details", log_verbosity="details"))
     window._session_store.upsert_session(AppSession(name="debug", log_verbosity="debug"))
