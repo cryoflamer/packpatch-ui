@@ -164,6 +164,16 @@ management, but the compositor (not PackPatch) controls dialog positions.
 If your system has an unusable XCB plugin, use this override to launch with
 Wayland.
 
+Qt-owned dialogs are explicitly positioned **before** the first `showEvent`
+(avoiding Qt's automatic re-placement), and checked after the window manager
+maps them. If WSLg still puts a dialog at the corner, open **Log → View: Debug**
+and reproduce the issue. The `Dialog placement:` entry shows the actual Qt
+backend, the main window's reported rectangle, and the target/actual dialog
+coordinates. If the coordinates disagree, a warning also appears in the normal
+**Status** log view. This diagnostics is useful when WSLg reports coordinates
+that do not match the positions seen on the Windows desktop; changing the
+backend alone cannot fix that discrepancy.
+
 ## Basic workflow
 
 ### 1. Select a repository

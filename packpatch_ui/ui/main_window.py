@@ -71,7 +71,7 @@ from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAM
 from packpatch_ui.services.session_log_store import LogEntry, LogSeverity, LogVerbosity, SessionLogStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
-from packpatch_ui.ui.dialog_positioning import DialogPositioningFilter, choose_directory
+from packpatch_ui.ui.dialog_positioning import DialogPositioningFilter, choose_directory, exec_centered
 from packpatch_ui.ui.artifact_list import FileDragListWidget
 from packpatch_ui.ui.file_tree import FileTreeWidget
 from packpatch_ui.ui.settings_dialog import SettingsDialog
@@ -93,7 +93,7 @@ class MainWindow(QMainWindow):
         self._pack_busy = False
         self._apply_busy = False
         self._push_busy = False
-        self._dialog_positioning_filter = DialogPositioningFilter(self)
+        self._dialog_positioning_filter = DialogPositioningFilter(self, report=self._report_dialog_position)
         QApplication.instance().installEventFilter(self._dialog_positioning_filter)
 
         self.session_combo = QComboBox(self)
@@ -691,7 +691,7 @@ class MainWindow(QMainWindow):
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         layout.addRow(buttons)
-        if dialog.exec() != QDialog.Accepted:
+        if exec_centered(dialog, self) != QDialog.Accepted:
             return
         name = name_edit.text().strip()
         if not name:
@@ -2219,6 +2219,14 @@ class MainWindow(QMainWindow):
         QApplication.clipboard().setText(commit_hash)
         self._append_log(f"Copied commit hash: {commit_hash}")
         self.statusBar().showMessage("Copied commit hash")
+
+    def _report_dialog_position(self, message: str, misplaced: bool) -> None:
+        """Record actual dialog coordinates for WSLg troubleshooting in the UI log."""
+        self._append_log(
+            message,
+            verbosity=LogVerbosity.STATUS if misplaced else LogVerbosity.DEBUG,
+            severity=LogSeverity.WARNING if misplaced else LogSeverity.INFO,
+        )
 
     def _append_log(
         self,
