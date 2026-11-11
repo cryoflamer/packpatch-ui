@@ -773,10 +773,18 @@ def test_deleted_session_log_not_resurrected_when_name_reused(
     window._append_log("deleted alpha history", verbosity=LogVerbosity.STATUS)
     window._delete_current_session()
     assert window._session_logs.entries_for("alpha") == ()
-    monkeypatch.setattr(
-        "packpatch_ui.ui.main_window.QInputDialog.getText",
-        lambda *args, **kwargs: ("alpha", True),
-    )
+    # New session uses a custom QDialog, not QInputDialog.getText.
+    # Accept it synchronously: otherwise the modal exec() waits forever.
+    from PySide6.QtWidgets import QDialog, QLineEdit
+
+    def accept_new_session(dialog: QDialog) -> int:
+        assert dialog.windowTitle() == "New session"
+        name_edit = dialog.findChild(QLineEdit)
+        assert name_edit is not None
+        name_edit.setText("alpha")
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", accept_new_session)
     window._new_session()
     assert window._current_session_name == "alpha"
     assert "deleted alpha history" not in window.log.toPlainText()
