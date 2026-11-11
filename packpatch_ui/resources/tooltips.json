@@ -11,6 +11,7 @@
   "pack.mode": "Choose which working-tree files to include in the pack: selected files, changed files, full repository snapshot, or full snapshot with unversioned files.",
   "pack.task": "Pack name used in the generated archive filename. If empty, PackPatch UI uses the current repository directory name.",
   "pack.create": "Create a chatgpt-pack archive from the current repository using the selected pack mode.",
+  "pack.export": "Copy exactly one selected archive from Latest packs to Export dir without creating a new pack. Works even when Auto export pack is off and confirms overwrites.",
   "pack.auto_export": "Copy each newly created pack to the export directory automatically.",
   "pack.include_sensitive": "Include tracked keys and certificates that are normally excluded from packs (*.key, *.crt, *.pem, *.p12, *.pfx, *.cer). Untracked sensitive files remain excluded.",
   "pack.export_dir": "Directory where newly created packs are copied when auto export is enabled.",

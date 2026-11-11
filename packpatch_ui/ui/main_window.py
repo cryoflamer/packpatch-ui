@@ -138,6 +138,7 @@ class MainWindow(QMainWindow):
         self.task_name_edit = QLineEdit(self)
         self.task_name_edit.setPlaceholderText("Pack name, e.g. packpatch, vpn, ias")
         self.create_pack_button = QPushButton("Create pack", self)
+        self.export_pack_button = QPushButton("Export pack", self)
 
         self.auto_export_pack_check = QCheckBox("Auto export pack", self)
         self.include_sensitive_files_check = QCheckBox("Include keys/certs", self)
@@ -296,6 +297,7 @@ class MainWindow(QMainWindow):
         pack_controls.addWidget(QLabel("Pack name:", widget))
         pack_controls.addWidget(self.task_name_edit, stretch=1)
         pack_controls.addWidget(self.create_pack_button)
+        pack_controls.addWidget(self.export_pack_button)
 
         export_controls = QHBoxLayout()
         export_controls.addWidget(QLabel("Export dir:", widget))
@@ -459,6 +461,7 @@ class MainWindow(QMainWindow):
             self.pack_mode_combo: "pack.mode",
             self.task_name_edit: "pack.task",
             self.create_pack_button: "pack.create",
+            self.export_pack_button: "pack.export",
             self.auto_export_pack_check: "pack.auto_export",
             self.include_sensitive_files_check: "pack.include_sensitive",
             self.include_unversioned_files_check: "pack.include_unversioned",
@@ -567,6 +570,8 @@ class MainWindow(QMainWindow):
         self.check_all_button.clicked.connect(self._check_all_files)
         self.clear_selection_button.clicked.connect(self._clear_file_selection)
         self.create_pack_button.clicked.connect(self._create_pack)
+        self.export_pack_button.clicked.connect(self._export_selected_pack)
+        self.pack_list.itemSelectionChanged.connect(self._refresh_export_pack_button)
         self.browse_patch_dir_button.clicked.connect(self._browse_patch_directory)
         self.check_latest_patch_button.clicked.connect(self._check_latest_patch)
         self.dry_run_patch_button.clicked.connect(lambda: self._apply_latest_patch(dry_run=True))
@@ -1140,6 +1145,7 @@ class MainWindow(QMainWindow):
         any_busy = self._pack_busy or self._apply_busy
 
         self.create_pack_button.setEnabled(not any_busy)
+        self._refresh_export_pack_button()
         self.create_pack_button.setText("Creating..." if self._pack_busy else "Create pack")
 
         self.apply_latest_patch_button.setEnabled(not any_busy)
@@ -1150,6 +1156,75 @@ class MainWindow(QMainWindow):
         self.undo_last_commit_button.setEnabled(not self._apply_busy)
         self.deploy_repo_button.setEnabled(not self._apply_busy)
         self.clear_session_files_button.setEnabled(not any_busy)
+
+    def _selected_pack_for_export(self) -> Path | None:
+        """Return exactly one selected pack, without falling back to a current row."""
+        selected = self.pack_list.selectedItems()
+        if len(selected) != 1:
+            return None
+        value = selected[0].data(Qt.ItemDataRole.UserRole)
+        if not isinstance(value, str) or not value:
+            return None
+        return Path(value).expanduser()
+
+    def _refresh_export_pack_button(self) -> None:
+        self.export_pack_button.setEnabled(
+            not (self._pack_busy or self._apply_busy)
+            and self._selected_pack_for_export() is not None
+        )
+
+    def _export_selected_pack(self) -> None:
+        """Copy a selected existing pack independently of the auto-export setting."""
+        if self._pack_busy or self._apply_busy:
+            return
+
+        source = self._selected_pack_for_export()
+        if source is None:
+            self.statusBar().showMessage("Select one pack to export")
+            return
+        if not source.is_file():
+            self._append_log(f"Cannot export pack: file not found:\n  {source}")
+            self.statusBar().showMessage("Pack file not found")
+            return
+
+        export_dir_text = self.export_dir_edit.text().strip()
+        if not export_dir_text:
+            self._append_log("Cannot export pack: export directory is empty.")
+            self.statusBar().showMessage("Export directory is empty")
+            return
+
+        destination = Path(export_dir_text).expanduser() / source.name
+        if source.resolve() == destination.resolve():
+            self._append_log("Pack is already in the export directory.", verbosity=LogVerbosity.STATUS)
+            self.statusBar().showMessage("Pack is already in the export directory")
+            return
+
+        if destination.exists():
+            if not destination.is_file():
+                self._append_log(f"Cannot export pack: destination is not a file:\n  {destination}")
+                self.statusBar().showMessage("Pack export failed")
+                return
+            answer = QMessageBox.question(
+                self,
+                "Overwrite exported pack?",
+                f"The export destination already contains {source.name}.\n\nOverwrite it?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self.statusBar().showMessage("Pack export cancelled")
+                return
+
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        except OSError as error:
+            self._append_log(f"Cannot export pack: {error}")
+            self.statusBar().showMessage("Pack export failed")
+            return
+
+        self._append_log(f"Exported pack:\n  {destination}", verbosity=LogVerbosity.STATUS)
+        self.statusBar().showMessage("Pack exported")
 
     def _create_pack(self) -> None:
         if self._pack_busy:
@@ -1324,6 +1399,8 @@ class MainWindow(QMainWindow):
             widget.addItem(item)
         if artifacts:
             widget.setCurrentRow(0)
+        if widget is self.pack_list:
+            self._refresh_export_pack_button()
         return len(artifacts)
 
     def _selected_patch_paths(self) -> list[Path]:

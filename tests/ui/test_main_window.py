@@ -300,3 +300,85 @@ def test_zip_patch_resolves_member_until_action_finishes(window: MainWindow, tmp
         assert resolved.read_text() == "patch body"
         extracted_path = resolved
     assert not extracted_path.exists()
+
+
+def _prepare_export_pack(window: MainWindow, tmp_path: Path) -> tuple[Path, Path]:
+    repo = init_repo(tmp_path / "export-repo")
+    archive_dir = repo / "chatgpt-packs"
+    archive_dir.mkdir()
+    archive = archive_dir / "chatgpt-pack-full-export-20261111-0840.tar.gz"
+    archive.write_bytes(b"source content")
+    export_dir = tmp_path / "export-destination"
+    window._repo_info = GitRepoInfo(root=repo, branch="main", is_dirty=False)
+    window.export_dir_edit.setText(str(export_dir))
+    window._refresh_artifact_lists()
+    assert window.pack_list.count() == 1
+    return archive, export_dir
+
+
+def test_manual_export_works_with_auto_export_disabled(window: MainWindow, tmp_path: Path) -> None:
+    archive, export_dir = _prepare_export_pack(window, tmp_path)
+    window.auto_export_pack_check.setChecked(False)
+    assert window.export_pack_button.isEnabled()
+
+    window.export_pack_button.click()
+
+    assert (export_dir / archive.name).read_bytes() == b"source content"
+    assert archive.exists()
+    assert window.statusBar().currentMessage() == "Pack exported"
+
+
+def test_manual_export_overwrite_requires_confirmation(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive, export_dir = _prepare_export_pack(window, tmp_path)
+    export_dir.mkdir()
+    target = export_dir / archive.name
+    target.write_bytes(b"previous content")
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
+
+    window._export_selected_pack()
+    assert target.read_bytes() == b"previous content"
+    assert window.statusBar().currentMessage() == "Pack export cancelled"
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    window._export_selected_pack()
+    assert target.read_bytes() == b"source content"
+
+
+def test_manual_export_requires_one_selected_pack(window: MainWindow, tmp_path: Path) -> None:
+    archive, export_dir = _prepare_export_pack(window, tmp_path)
+    other = archive.parent / "chatgpt-pack-full-other-20261111-0841.tar.gz"
+    other.write_bytes(b"other")
+    window._refresh_artifact_lists()
+    window.pack_list.clearSelection()
+    assert not window.export_pack_button.isEnabled()
+    window._export_selected_pack()
+    assert not export_dir.exists()
+
+    window.pack_list.item(0).setSelected(True)
+    window.pack_list.item(1).setSelected(True)
+    assert not window.export_pack_button.isEnabled()
+    window._export_selected_pack()
+    assert not export_dir.exists()
+
+
+def test_manual_export_skips_same_source_destination(window: MainWindow, tmp_path: Path) -> None:
+    archive, _ = _prepare_export_pack(window, tmp_path)
+    window.export_dir_edit.setText(str(archive.parent))
+    window._export_selected_pack()
+    assert archive.read_bytes() == b"source content"
+    assert window.statusBar().currentMessage() == "Pack is already in the export directory"
+
+
+def test_manual_export_button_disabled_during_pack_and_apply(window: MainWindow, tmp_path: Path) -> None:
+    _prepare_export_pack(window, tmp_path)
+    assert window.export_pack_button.isEnabled()
+    window._set_pack_busy(True)
+    assert not window.export_pack_button.isEnabled()
+    window._set_pack_busy(False)
+    assert window.export_pack_button.isEnabled()
+    window._set_apply_busy(True)
+    assert not window.export_pack_button.isEnabled()
+    window._set_apply_busy(False)
+    assert window.export_pack_button.isEnabled()
