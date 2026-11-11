@@ -594,15 +594,15 @@ def test_auto_push_setting_defaults_off_and_persists_per_session(window: MainWin
 def test_manual_push_requires_confirmation_and_uses_confirmed_target(
     window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from packpatch_ui.core.git_push import PushResult, PushTarget
+    from packpatch_ui.core.git_push import PushResult, PushState, PushTarget
 
     window._repo_info = GitRepoInfo(root=tmp_path, branch="main", is_dirty=False)
     target = PushTarget("main", "origin", "refs/heads/main")
-    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_target", lambda *_: target)
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_state", lambda *_: PushState(target, 1, 0))
     pushed = []
     monkeypatch.setattr(
         "packpatch_ui.ui.main_window.push_current_branch",
-        lambda root, *, expected_target=None: (pushed.append((root, expected_target)) or PushResult(True, "Pushed.")),
+        lambda root, *, expected_target=None: (pushed.append((root, expected_target)) or PushResult(True, "Pushed.", pushed=True)),
     )
     monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.No)
     window._push_manually()
@@ -825,3 +825,32 @@ def test_push_outcome_is_visible_only_in_the_session_that_pushed(
     assert "simulated push rejected" not in window.log.toPlainText()
     window.session_combo.setCurrentText("alpha")
     assert "simulated push rejected" in window.log.toPlainText()
+
+
+def test_manual_push_of_synced_branch_skips_confirmation(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from packpatch_ui.core.git_push import PushResult, PushState, PushTarget
+
+    window._repo_info = GitRepoInfo(root=tmp_path, branch="main", is_dirty=False)
+    target = PushTarget("main", "origin", "refs/heads/main")
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.current_push_state", lambda *_: PushState(target, 0, 0),
+    )
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *args, **kwargs: pytest.fail("No confirmation needed"),
+    )
+    calls = []
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.push_current_branch",
+        lambda *args, **kwargs: (
+            calls.append(kwargs.get("expected_target")) or PushResult(
+                True, "Already up to date (local tracking ref): main → origin/main. Nothing to push.",
+                ahead=0, behind=0,
+            )
+        ),
+    )
+    window._push_manually()
+    assert calls == [target]
+    assert "Already up to date" in window.log.toPlainText()
+    assert window.statusBar().currentMessage() == "Nothing to push"

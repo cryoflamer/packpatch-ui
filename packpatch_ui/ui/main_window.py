@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack_archives, list_patch_files
 from packpatch_ui.core.deploy_runner import deploy_repo
-from packpatch_ui.core.git_push import PushTarget, PushUnavailable, current_push_target, push_current_branch
+from packpatch_ui.core.git_push import PushTarget, PushUnavailable, current_push_state, current_push_target, push_current_branch
 from packpatch_ui.core.zip_patch import extracted_patch, patch_members
 from packpatch_ui.core.git_repo import (
     GitRepoInfo,
@@ -1137,10 +1137,16 @@ class MainWindow(QMainWindow):
         if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy:
             return
         try:
-            target = current_push_target(self._repo_info.root)
+            state = current_push_state(self._repo_info.root)
         except (PushUnavailable, OSError) as exc:
             self._append_log(f"Cannot push: {exc}", severity=LogSeverity.WARNING)
             self.statusBar().showMessage("Push unavailable")
+            return
+        target = state.target
+        if state.ahead == 0:
+            # No remote interaction or confirmation is needed when there are
+            # no local commits to send; core rechecks the comparison.
+            self._push_to_upstream(expected_target=target)
             return
         answer = QMessageBox.question(
             self, "Confirm push", f"Push {target.description}?\n\nNo force push will be used.",
@@ -1174,10 +1180,15 @@ class MainWindow(QMainWindow):
         finally:
             self._push_busy = False
             self._refresh_busy_controls()
+        if result.ahead is not None:
+            self._append_log(
+                f"Push preflight (local tracking ref): ahead={result.ahead}, behind={result.behind}.",
+                verbosity=LogVerbosity.DEBUG,
+            )
         if result.succeeded:
             self._append_log(result.message, verbosity=LogVerbosity.STATUS)
             if not auto:
-                self.statusBar().showMessage("Push completed")
+                self.statusBar().showMessage("Push completed" if result.pushed else "Nothing to push")
         else:
             self._append_log(
                 f"{'Auto push' if auto else 'Push'} failed: {result.message}",

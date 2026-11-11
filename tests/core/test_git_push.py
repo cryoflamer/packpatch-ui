@@ -8,6 +8,7 @@ import pytest
 from packpatch_ui.core.git_push import (
     PUSH_TIMEOUT_SECONDS,
     PushUnavailable,
+    current_push_state,
     current_push_target,
     push_current_branch,
 )
@@ -55,9 +56,13 @@ def test_push_only_current_tracking_branch_without_force_or_upstream_modificatio
     result = push_current_branch(repo, expected_target=target)
 
     assert result.succeeded, result.stderr
+    assert result.pushed
+    assert (result.ahead, result.behind) == (1, 0)
     assert git(remote, "rev-parse", "refs/heads/main") == head
     assert git(remote, "rev-parse", "refs/heads/unrelated") == other_head
     assert git(repo, "rev-parse", "HEAD") == head
+    assert (current_push_state(repo).ahead, current_push_state(repo).behind) == (0, 0)
+    assert "Already up to date" in push_current_branch(repo).message
 
 
 def test_no_remote_tracking_branch_and_detached_head_are_not_pushed(tmp_path: Path) -> None:
@@ -104,16 +109,18 @@ def test_non_fast_forward_rejected_without_losing_local_commit(tmp_path: Path) -
 
 def test_git_push_timeout_is_bounded_and_non_interactive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     repo, _ = setup_repo(tmp_path)
+    commit(repo, "local ahead")
     seen = {}
+    real_run = subprocess.run
 
     def time_out(command, **kwargs):
+        if command[:2] != ["git", "push"]:
+            return real_run(command, **kwargs)
         seen["command"] = command
         seen["env"] = kwargs["env"]
         seen["timeout"] = kwargs["timeout"]
-        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=b"partial stdout", stderr=b"partial stderr")
 
-    target = current_push_target(repo)
-    monkeypatch.setattr("packpatch_ui.core.git_push.current_push_target", lambda *_: target)
     monkeypatch.setattr("packpatch_ui.core.git_push.subprocess.run", time_out)
     result = push_current_branch(repo)
     assert not result.succeeded
@@ -122,3 +129,94 @@ def test_git_push_timeout_is_bounded_and_non_interactive(tmp_path: Path, monkeyp
     assert seen["command"] == ["git", "push", "--porcelain", "--", "origin", "HEAD:refs/heads/main"]
     assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0"
     assert seen["env"]["GCM_INTERACTIVE"] == "never"
+
+
+def test_already_synced_branch_skips_network_and_confirmation_is_not_needed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, remote = setup_repo(tmp_path)
+    real_run = subprocess.run
+    calls = []
+
+    def reject_push(command, **kwargs):
+        if command[:2] == ["git", "push"]:
+            calls.append(command)
+            pytest.fail("Network push was attempted for an up-to-date branch")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr("packpatch_ui.core.git_push.subprocess.run", reject_push)
+    state = current_push_state(repo)
+    assert (state.ahead, state.behind) == (0, 0)
+    result = push_current_branch(repo)
+    assert result.succeeded and not result.pushed
+    assert "Already up to date" in result.message
+    assert "local tracking ref" in result.message
+    assert calls == []
+    assert git(remote, "rev-parse", "refs/heads/main") == git(repo, "rev-parse", "HEAD")
+
+
+def test_behind_upstream_does_not_start_a_network_push(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, remote = setup_repo(tmp_path)
+    competitor = tmp_path / "competitor"
+    git(tmp_path, "clone", str(remote), str(competitor))
+    git(competitor, "checkout", "-b", "main", "origin/main")
+    git(competitor, "config", "user.name", "Other")
+    git(competitor, "config", "user.email", "other@example.invalid")
+    remote_head = commit(competitor, "remote ahead")
+    git(competitor, "push", "origin", "main")
+    git(repo, "fetch", "origin", "main")
+    real_run = subprocess.run
+
+    def reject_push(command, **kwargs):
+        if command[:2] == ["git", "push"]:
+            pytest.fail("Network push was attempted with no local commits to send")
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr("packpatch_ui.core.git_push.subprocess.run", reject_push)
+    state = current_push_state(repo)
+    assert (state.ahead, state.behind) == (0, 1)
+    result = push_current_branch(repo)
+    assert result.succeeded and not result.pushed
+    assert "ahead by 1 commit" in result.message
+    assert git(remote, "rev-parse", "refs/heads/main") == remote_head
+
+
+def test_diverged_upstream_push_is_attempted_normally_and_rejected(tmp_path: Path) -> None:
+    repo, remote = setup_repo(tmp_path)
+    competitor = tmp_path / "competitor"
+    git(tmp_path, "clone", str(remote), str(competitor))
+    git(competitor, "checkout", "-b", "main", "origin/main")
+    git(competitor, "config", "user.name", "Other")
+    git(competitor, "config", "user.email", "other@example.invalid")
+    remote_head = commit(competitor, "remote ahead")
+    git(competitor, "push", "origin", "main")
+    git(repo, "fetch", "origin", "main")
+    head = commit(repo, "local ahead")
+    state = current_push_state(repo)
+    assert (state.ahead, state.behind) == (1, 1)
+    result = push_current_branch(repo)
+    assert not result.succeeded
+    assert (result.ahead, result.behind) == (1, 1)
+    assert git(remote, "rev-parse", "refs/heads/main") == remote_head
+    assert git(repo, "rev-parse", "HEAD") == head
+
+
+def test_timeout_preserves_partial_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, _ = setup_repo(tmp_path)
+    commit(repo, "local ahead")
+    real_run = subprocess.run
+
+    def time_out(command, **kwargs):
+        if command[:2] != ["git", "push"]:
+            return real_run(command, **kwargs)
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"], output=b"partial out", stderr=b"partial err")
+
+    monkeypatch.setattr("packpatch_ui.core.git_push.subprocess.run", time_out)
+    result = push_current_branch(repo)
+    assert not result.succeeded
+    assert result.stdout == "partial out"
+    assert result.stderr == "partial err"
+    assert "Partial Git output" in result.message
+    assert (result.ahead, result.behind) == (1, 0)

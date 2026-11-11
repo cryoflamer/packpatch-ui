@@ -81,15 +81,21 @@ The UI also includes:
 
 ### Git push
 
-`Git commits → Push` confirms the configured upstream before pushing only the current
-branch, without force or upstream creation. `Settings → Repository → Auto push after
-successful apply` is off by default and saved per session. It runs only when the UI's
+`Git commits → Push` confirms the configured upstream before sending local commits
+from the current branch, without force or upstream creation. Before manual or automatic
+push, the app compares HEAD with its **locally cached** upstream tracking ref. If no
+local commits are ahead, it reports "Already up to date" or "Nothing to push" without
+contacting the remote or requesting confirmation. This comparison is not a `git fetch`:
+changes on the server made since the last fetch/push will not be visible until fetched.
+The `Settings → Repository → Auto push after successful apply` option is off by default and saved per session. It runs only when the UI's
 `Apply patch` creates a **new local commit**; dry-runs, failed or already-applied patches,
 and PackPatch applications without a commit never trigger it. Ordinary commits made
 outside the UI do not trigger auto push. A failed push does not roll back the local commit.
 
 An upstream must already be configured (for example by a one-time manual
-`git push -u origin main`). Pushes run non-interactively with a 30-second timeout.
+`git push -u origin main`). Actual pushes run non-interactively with a 30-second
+timeout. On timeout the Status log gives a diagnostic hint and any partial Git output
+is retained in Debug (for example, SSH, connectivity or credential-helper failures).
 
 ### Sessions
 
