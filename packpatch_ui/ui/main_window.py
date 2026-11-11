@@ -20,6 +20,9 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
@@ -65,7 +68,7 @@ from packpatch_ui.core.patch_runner import (
     undo_last_commit,
 )
 from packpatch_ui.services.process_runner import run_process
-from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
+from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore, new_session_from_template
 from packpatch_ui.services.session_log_store import LogEntry, LogSeverity, LogVerbosity, SessionLogStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
@@ -664,16 +667,42 @@ class MainWindow(QMainWindow):
         self._append_log(f"Session loaded: {session.name}")
 
     def _new_session(self) -> None:
-        name, accepted = QInputDialog.getText(self, "New session", "Session name:")
-        name = name.strip()
-        if not accepted or not name:
+        # Persist pending edits so the active session is a reliable template.
+        self._autosave_timer.stop()
+        self._autosave_current_session()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("New session")
+        layout = QFormLayout(dialog)
+        name_edit = QLineEdit(dialog)
+        name_edit.setPlaceholderText("New session name")
+        source_combo = QComboBox(dialog)
+        source_combo.addItem("Default settings", None)
+        for session in self._session_store.load_sessions():
+            source_combo.addItem(session.name, session.name)
+        current_index = source_combo.findData(self._current_session_name)
+        if current_index >= 0:
+            source_combo.setCurrentIndex(current_index)
+        layout.addRow("Session name:", name_edit)
+        layout.addRow("Copy settings from:", source_combo)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dialog)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
             return
-        if self._session_store.get_session(name) is not None:
+        name = name_edit.text().strip()
+        if not name:
+            self.statusBar().showMessage("Session name is required")
+            return
+        if self._session_store.get_session(name) is not None or name == DEFAULT_SESSION_NAME:
             self._append_log(f"Session already exists: {name}")
             self.statusBar().showMessage("Session already exists")
             return
 
-        session = AppSession(name=name, patch_dir=str(Path.home() / "Downloads"))
+        source_name = source_combo.currentData()
+        source = self._session_store.get_session(source_name) if source_name else None
+        session = new_session_from_template(name, source)
         self._session_store.upsert_session(session)
         self._reload_session_combo(select_name=name)
         self._load_current_session()

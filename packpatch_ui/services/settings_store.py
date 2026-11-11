@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +98,22 @@ class AppSession:
     def to_dict(self) -> dict[str, Any]:
         """Convert the session to JSON-serializable data."""
         return asdict(self)
+
+
+def new_session_from_template(name: str, source: AppSession | None = None) -> AppSession:
+    """Create an independent session, copying preferences but not repository state."""
+    if source is None:
+        return AppSession(name=name, patch_dir=str(Path.home() / "Downloads"))
+    return replace(
+        source,
+        name=name,
+        repo_path="",
+        task_name="",
+        commit_message="",
+        selected_files=[],
+        file_filter="",
+        window_geometry="",
+    )
 
 
 class SessionStore:

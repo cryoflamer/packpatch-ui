@@ -854,3 +854,61 @@ def test_manual_push_of_synced_branch_skips_confirmation(
     assert calls == [target]
     assert "Already up to date" in window.log.toPlainText()
     assert window.statusBar().currentMessage() == "Nothing to push"
+
+
+def test_new_session_copies_selected_template_and_keeps_export_directory(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QComboBox, QDialog, QLineEdit
+
+    window._session_store.upsert_session(AppSession(
+        name="template", repo_path="/old/repo", export_dir="/shared/exports",
+        pack_mode="full", auto_push_after_apply=True, selected_files=["README.md"],
+    ), make_active=False)
+
+    original_exec = QDialog.exec
+
+    def accept_dialog(dialog: QDialog) -> int:
+        def fill() -> None:
+            dialog.findChild(QLineEdit).setText("new-project")
+            combo = dialog.findChild(QComboBox)
+            combo.setCurrentIndex(combo.findData("template"))
+            dialog.accept()
+        QTimer.singleShot(0, fill)
+        return original_exec(dialog)
+
+    monkeypatch.setattr(QDialog, "exec", accept_dialog)
+    window._new_session()
+    new = window._session_store.get_session("new-project")
+    assert new is not None
+    assert new.export_dir == "/shared/exports"
+    assert new.repo_path == ""
+    assert new.task_name == ""
+    assert new.selected_files == []
+    assert new.pack_mode == "full"
+    assert new.auto_push_after_apply
+    assert window.session_combo.currentText() == "new-project"
+
+
+def test_new_session_can_use_defaults(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QComboBox, QDialog, QLineEdit
+
+    original_exec = QDialog.exec
+
+    def accept_dialog(dialog: QDialog) -> int:
+        def fill() -> None:
+            dialog.findChild(QLineEdit).setText("blank-project")
+            dialog.findChild(QComboBox).setCurrentIndex(0)
+            dialog.accept()
+        QTimer.singleShot(0, fill)
+        return original_exec(dialog)
+
+    monkeypatch.setattr(QDialog, "exec", accept_dialog)
+    window._new_session()
+    new = window._session_store.get_session("blank-project")
+    assert new is not None
+    assert new.pack_mode == "slice"
+    assert new.repo_path == ""
+    assert not new.auto_push_after_apply

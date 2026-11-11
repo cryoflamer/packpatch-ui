@@ -8,6 +8,7 @@ from packpatch_ui.services.settings_store import (
     AppSession,
     SessionStore,
     default_sessions_path,
+    new_session_from_template,
 )
 
 
@@ -136,3 +137,40 @@ def test_default_sessions_path_honors_xdg_config_home(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
 
     assert default_sessions_path() == tmp_path / "xdg" / "packpatch-ui" / "sessions.json"
+
+
+def test_new_session_from_template_copies_preferences_not_repository_state() -> None:
+    source = AppSession(
+        name="old", repo_path="/repo/old", patch_dir="/patches",
+        export_dir="/shared/export", deploy_dir="/deploy", task_name="old",
+        commit_message="previous commit", selected_files=["README.md"],
+        file_filter="*.py", window_geometry="encoded",
+        pack_mode="full", git_history_depth=4, auto_push_after_apply=True,
+        auto_export_pack=True, log_verbosity="debug",
+    )
+    new = new_session_from_template("new", source)
+    assert new.name == "new"
+    assert new.repo_path == ""
+    assert new.task_name == ""
+    assert new.commit_message == ""
+    assert new.selected_files == []
+    assert new.file_filter == ""
+    assert new.window_geometry == ""
+    assert new.export_dir == "/shared/export"
+    assert new.patch_dir == "/patches"
+    assert new.deploy_dir == "/deploy"
+    assert new.pack_mode == "full"
+    assert new.git_history_depth == 4
+    assert new.auto_push_after_apply
+    assert new.auto_export_pack
+    assert new.log_verbosity == "debug"
+    new.selected_files.append("new-file")
+    assert source.selected_files == ["README.md"]
+
+def test_new_session_default_settings_are_independent() -> None:
+    new = new_session_from_template("fresh")
+    assert new.name == "fresh"
+    assert new.repo_path == ""
+    assert new.pack_mode == "slice"
+    assert not new.auto_push_after_apply
+    assert new.patch_dir
