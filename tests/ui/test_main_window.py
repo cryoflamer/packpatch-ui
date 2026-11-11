@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QMessageBox
 
 from packpatch_ui.core.git_repo import GitRepoInfo
 from packpatch_ui.core.pack_runner import PackResult
-from packpatch_ui.services.settings_store import AppSession
+from packpatch_ui.services.settings_store import AppSession, SessionStore
 from packpatch_ui.ui.main_window import LogSeverity, LogVerbosity, MainWindow
 
 
@@ -934,3 +934,27 @@ def test_browse_actions_use_owned_directory_picker(window, monkeypatch, method, 
     getattr(window, method)()
     assert seen == [(window, title)]
     assert getattr(window, edit_name).text() == "/tmp/selected-directory"
+
+
+def test_switching_sessions_does_not_restore_session_geometry(window: MainWindow, monkeypatch) -> None:
+    window._session_store.upsert_session(AppSession(name="alpha", window_geometry="old-a"))
+    window._session_store.upsert_session(AppSession(name="beta", window_geometry="old-b"))
+    restored: list[str] = []
+    monkeypatch.setattr(window, "_restore_window_geometry", restored.append)
+    window._load_session_by_name("alpha")
+    window._load_session_by_name("beta")
+    assert restored == []
+    assert window._session_store.load_window_geometry() == window._encoded_window_geometry()
+    assert window._current_session_snapshot("beta").window_geometry == ""
+
+def test_saved_global_window_geometry_is_restored_once_on_startup(qtbot, tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    store = SessionStore(tmp_path / "config" / "packpatch-ui" / "sessions.json")
+    store.save_sessions([AppSession(name="alpha", window_geometry="legacy-alpha")],
+                        active_session="alpha", window_geometry="")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window._repository_watch_timer.stop()
+    window._autosave_timer.stop()
+    assert window._geometry_restore_done
+    assert window._session_store.load_window_geometry() == ""

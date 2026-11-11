@@ -81,7 +81,9 @@ def test_app_session_roundtrip_preserves_all_current_fields() -> None:
 
     restored = AppSession.from_dict(original.to_dict())
 
-    assert restored == original
+    assert restored.to_dict() == original.to_dict()
+    assert restored.window_geometry == ""  # Stored only at application level.
+    assert "window_geometry" not in original.to_dict()
 
 
 def test_session_store_roundtrip_sorts_sessions_and_restores_active_name(tmp_path: Path) -> None:
@@ -174,3 +176,43 @@ def test_new_session_default_settings_are_independent() -> None:
     assert new.pack_mode == "slice"
     assert not new.auto_push_after_apply
     assert new.patch_dir
+
+
+def test_global_window_geometry_survives_switches_and_session_edits(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "sessions.json")
+    store.save_sessions([AppSession(name="alpha"), AppSession(name="beta")],
+                        active_session="alpha", window_geometry="global-geometry")
+    store.upsert_session(AppSession(name="beta", repo_path="/repo"))
+    store.save_sessions(store.load_sessions(), active_session="beta")
+    store.delete_session("alpha")
+    assert store.load_window_geometry() == "global-geometry"
+    payload = json.loads(store.path.read_text(encoding="utf-8"))
+    assert payload["window_geometry"] == "global-geometry"
+    assert all("window_geometry" not in item for item in payload["sessions"])
+
+
+def test_legacy_window_geometry_migrates_from_last_active_session(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "sessions.json")
+    store.path.write_text(json.dumps({
+        "format": "packpatch-ui-sessions-v2",
+        "active_session": "beta",
+        "sessions": [
+            {"name": "alpha", "window_geometry": "alpha-geometry"},
+            {"name": "beta", "window_geometry": "beta-geometry"},
+        ],
+    }), encoding="utf-8")
+    assert store.load_window_geometry() == "beta-geometry"
+    store.save_sessions(store.load_sessions(), active_session="alpha")
+    assert store.load_window_geometry() == "beta-geometry"
+    payload = json.loads(store.path.read_text(encoding="utf-8"))
+    assert payload["window_geometry"] == "beta-geometry"
+    assert all("window_geometry" not in item for item in payload["sessions"])
+
+def test_explicit_global_geometry_replaces_legacy_geometry(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "sessions.json")
+    store.save_sessions([AppSession(name="alpha", window_geometry="legacy")],
+                        active_session="alpha", window_geometry="current")
+    assert store.load_window_geometry() == "current"
+    store.upsert_session(AppSession(name="alpha", window_geometry="another-legacy"),
+                         window_geometry="new-current")
+    assert store.load_window_geometry() == "new-current"

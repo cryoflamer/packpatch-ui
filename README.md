@@ -109,8 +109,12 @@ A session remembers:
 - commit message;
 - selected files;
 - collapsed/expanded UI sections;
-- window geometry;
 - per-session log verbosity.
+
+Main-window position, size, and maximized state are **application-wide**, saved once
+in `sessions.json`. Switching sessions never restores an older window position.
+Legacy per-session geometry is migrated from the previously active session on
+the first save, without changing the other session settings.
 
 Each session has its own execution-log history in memory. Switching sessions restores
 that session's messages without copying messages from other repositories. `Clear log`

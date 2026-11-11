@@ -42,7 +42,7 @@ class AppSession:
     watch_repository_state: bool = True
     selected_files: list[str] = field(default_factory=list)
     file_filter: str = ""
-    window_geometry: str = ""
+    window_geometry: str = ""  # Legacy session field; read only for migration.
     latest_packs_collapsed: bool = True
     latest_patches_collapsed: bool = False
     patch_preview_collapsed: bool = True
@@ -97,7 +97,9 @@ class AppSession:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the session to JSON-serializable data."""
-        return asdict(self)
+        data = asdict(self)
+        data.pop("window_geometry", None)
+        return data
 
 
 def new_session_from_template(name: str, source: AppSession | None = None) -> AppSession:
@@ -141,6 +143,18 @@ class SessionStore:
             return active_session
         return DEFAULT_SESSION_NAME
 
+    def load_window_geometry(self) -> str:
+        """Read global geometry, falling back to the last active legacy session."""
+        payload = self._read_payload()
+        global_geometry = payload.get("window_geometry")
+        if isinstance(global_geometry, str):
+            return global_geometry
+        active_name = payload.get("active_session") or DEFAULT_SESSION_NAME
+        for item in payload.get("sessions", []):
+            if isinstance(item, dict) and item.get("name") == active_name:
+                return str(item.get("window_geometry") or "")
+        return ""
+
     def load_sessions(self) -> list[AppSession]:
         """Return all saved sessions sorted by name."""
         items = self._read_payload().get("sessions", [])
@@ -150,10 +164,14 @@ class SessionStore:
         sessions = [AppSession.from_dict(item) for item in items if isinstance(item, dict)]
         return sorted(sessions, key=lambda session: session.name.lower())
 
-    def save_sessions(self, sessions: list[AppSession], *, active_session: str | None = None) -> None:
+    def save_sessions(self, sessions: list[AppSession], *, active_session: str | None = None, window_geometry: str | None = None) -> None:
         """Persist *sessions* atomically enough for local UI usage."""
+        # Capture legacy geometry before overwriting the active-session name.
+        if window_geometry is None:
+            window_geometry = self.load_window_geometry()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
+            "window_geometry": window_geometry,
             "format": "packpatch-ui-sessions-v2",
             "active_session": active_session or self.load_active_session_name(),
             "sessions": [session.to_dict() for session in sorted(sessions, key=lambda item: item.name.lower())],
@@ -162,12 +180,12 @@ class SessionStore:
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         tmp_path.replace(self.path)
 
-    def upsert_session(self, session: AppSession, *, make_active: bool = True) -> None:
+    def upsert_session(self, session: AppSession, *, make_active: bool = True, window_geometry: str | None = None) -> None:
         """Insert or replace a session by name."""
         sessions = [item for item in self.load_sessions() if item.name != session.name]
         sessions.append(session)
         active_session = session.name if make_active else self.load_active_session_name()
-        self.save_sessions(sessions, active_session=active_session)
+        self.save_sessions(sessions, active_session=active_session, window_geometry=window_geometry)
 
     def delete_session(self, name: str) -> None:
         """Delete a session by name if it exists."""

@@ -243,6 +243,7 @@ class MainWindow(QMainWindow):
         self._current_session_name = self._session_store.load_active_session_name()
         self._reload_session_combo(select_name=self._current_session_name)
         self._load_current_session()
+        self._restore_window_geometry(self._session_store.load_window_geometry())
         self._refresh_busy_controls()
         self._repository_watch_timer.start()
         if not self._geometry_restore_done:
@@ -615,7 +616,10 @@ class MainWindow(QMainWindow):
         if self._loading_session or not name:
             return
         self._current_session_name = name
-        self._session_store.save_sessions(self._session_store.load_sessions(), active_session=name)
+        self._session_store.save_sessions(
+            self._session_store.load_sessions(), active_session=name,
+            window_geometry=self._encoded_window_geometry(),
+        )
         self._load_current_session()
 
     def _load_current_session(self) -> None:
@@ -657,8 +661,6 @@ class MainWindow(QMainWindow):
             self.git_commits_section.set_collapsed(session.git_commits_collapsed)
         finally:
             self._loading_session = False
-
-        self._restore_window_geometry(session.window_geometry)
 
         if session.repo_path:
             self._refresh_repository_status(selected_files=session.selected_files)
@@ -721,14 +723,19 @@ class MainWindow(QMainWindow):
         if not accepted or not name:
             return
         self._current_session_name = name
-        self._session_store.upsert_session(self._current_session_snapshot(name))
+        self._session_store.upsert_session(
+            self._current_session_snapshot(name), window_geometry=self._encoded_window_geometry()
+        )
         self._reload_session_combo(select_name=name)
         self._render_log_entries()  # Save as selects a distinct session, not its source log.
         self.statusBar().showMessage("Session saved")
         self._append_log(f"Session saved as: {name}")
 
     def _save_current_session(self) -> None:
-        self._session_store.upsert_session(self._current_session_snapshot(self._current_session_name))
+        self._session_store.upsert_session(
+            self._current_session_snapshot(self._current_session_name),
+            window_geometry=self._encoded_window_geometry(),
+        )
         self._reload_session_combo(select_name=self._current_session_name)
         self.statusBar().showMessage("Session saved")
         self._append_log(f"Session saved: {self._current_session_name}")
@@ -773,7 +780,6 @@ class MainWindow(QMainWindow):
             auto_push_after_apply=self.auto_push_after_apply_check.isChecked(),
             selected_files=self.file_tree.selected_paths(),
             file_filter=self.file_filter_edit.text().strip(),
-            window_geometry=self._encoded_window_geometry(),
             latest_packs_collapsed=self.packs_section.is_collapsed(),
             latest_patches_collapsed=self.patches_section.is_collapsed(),
             patch_preview_collapsed=self.patch_preview_section.is_collapsed(),
@@ -792,7 +798,10 @@ class MainWindow(QMainWindow):
     def _autosave_current_session(self) -> None:
         if self._loading_session:
             return
-        self._session_store.upsert_session(self._current_session_snapshot(self._current_session_name))
+        self._session_store.upsert_session(
+            self._current_session_snapshot(self._current_session_name),
+            window_geometry=self._encoded_window_geometry(),
+        )
         self.statusBar().showMessage("Session autosaved")
 
     def _patch_preview_section_toggled(self, expanded: bool) -> None:
