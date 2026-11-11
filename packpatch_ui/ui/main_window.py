@@ -9,9 +9,7 @@ import shutil
 import tempfile
 from contextlib import contextmanager
 from typing import Iterator
-from dataclasses import dataclass
 from datetime import datetime
-from enum import IntEnum
 from pathlib import Path
 
 from PySide6.QtCore import QByteArray, QTimer, Qt
@@ -68,37 +66,12 @@ from packpatch_ui.core.patch_runner import (
 )
 from packpatch_ui.services.process_runner import run_process
 from packpatch_ui.services.settings_store import AppSession, DEFAULT_SESSION_NAME, SessionStore
+from packpatch_ui.services.session_log_store import LogEntry, LogSeverity, LogVerbosity, SessionLogStore
 from packpatch_ui.services.tooltips import tooltip
 from packpatch_ui.ui.collapsible_section import CollapsibleSection
 from packpatch_ui.ui.artifact_list import FileDragListWidget
 from packpatch_ui.ui.file_tree import FileTreeWidget
 from packpatch_ui.ui.settings_dialog import SettingsDialog
-
-
-class LogVerbosity(IntEnum):
-    """Maximum detail shown in the execution log."""
-
-    STATUS = 0
-    DETAILS = 1
-    DEBUG = 2
-
-
-class LogSeverity(IntEnum):
-    """Severity that may override verbosity filtering."""
-
-    INFO = 0
-    WARNING = 1
-    ERROR = 2
-
-
-@dataclass(slots=True)
-class LogEntry:
-    """Structured in-memory log entry."""
-
-    timestamp: str
-    message: str
-    verbosity: LogVerbosity
-    severity: LogSeverity
 
 
 class MainWindow(QMainWindow):
@@ -113,7 +86,7 @@ class MainWindow(QMainWindow):
         self._geometry_restore_done = False
         self._repo_state_snapshot: GitRepoStateSnapshot | None = None
         self._repository_watch_busy = False
-        self._log_entries: list[LogEntry] = []
+        self._session_logs = SessionLogStore()
         self._pack_busy = False
         self._apply_busy = False
         self._push_busy = False
@@ -243,6 +216,7 @@ class MainWindow(QMainWindow):
         self.log.setReadOnly(True)
         self.log.setPlaceholderText("Command output and status messages will appear here.")
         self.log.setMinimumHeight(260)
+        self.clear_log_button = QPushButton("Clear log", self)
         self.log_verbosity_combo = QComboBox(self)
         self.log_verbosity_combo.addItem("Status", "status")
         self.log_verbosity_combo.addItem("Details", "details")
@@ -425,6 +399,7 @@ class MainWindow(QMainWindow):
         log_layout.setContentsMargins(0, 0, 0, 0)
         log_layout.setSpacing(4)
         log_controls = QHBoxLayout()
+        log_controls.addWidget(self.clear_log_button)
         log_controls.addStretch(1)
         log_controls.addWidget(QLabel("View:", log_widget))
         log_controls.addWidget(self.log_verbosity_combo)
@@ -526,6 +501,7 @@ class MainWindow(QMainWindow):
             self.log_section: "log",
             self.log: "log",
             self.log_verbosity_combo: "log.verbosity",
+            self.clear_log_button: "log.clear",
         }
         for widget, key in tooltip_map.items():
             text = tooltip(key)
@@ -548,6 +524,7 @@ class MainWindow(QMainWindow):
         self._autosave_timer.timeout.connect(self._autosave_current_session)
         self._repository_watch_timer.timeout.connect(self._poll_repository_state)
         self.log_verbosity_combo.currentIndexChanged.connect(self._log_verbosity_changed)
+        self.clear_log_button.clicked.connect(self._clear_current_session_log)
 
         self.browse_button.clicked.connect(self._browse_repository)
         self.refresh_button.clicked.connect(lambda: self._refresh_repository_status())
@@ -715,6 +692,7 @@ class MainWindow(QMainWindow):
         self._current_session_name = name
         self._session_store.upsert_session(self._current_session_snapshot(name))
         self._reload_session_combo(select_name=name)
+        self._render_log_entries()  # Save as selects a distinct session, not its source log.
         self.statusBar().showMessage("Session saved")
         self._append_log(f"Session saved as: {name}")
 
@@ -731,6 +709,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Default session cannot be deleted")
             return
         self._session_store.delete_session(name)
+        self._session_logs.clear(name)
         self._current_session_name = self._session_store.load_active_session_name()
         self._reload_session_combo(select_name=self._current_session_name)
         self._load_current_session()
@@ -1244,6 +1223,9 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(not any_busy)
         self.clear_session_files_button.setEnabled(not any_busy)
         self.session_combo.setEnabled(not any_busy)
+        self.new_session_button.setEnabled(not any_busy)
+        self.save_session_as_button.setEnabled(not any_busy)
+        self.delete_session_button.setEnabled(not any_busy)
 
     def _selected_pack_for_export(self) -> Path | None:
         """Return exactly one selected pack, without falling back to a current row."""
@@ -2202,18 +2184,26 @@ class MainWindow(QMainWindow):
         *,
         verbosity: LogVerbosity = LogVerbosity.DETAILS,
         severity: LogSeverity | None = None,
+        session_name: str | None = None,
     ) -> None:
-        """Store a structured log entry and render it when the active filter allows it."""
+        """Record an event for its originating session, not necessarily the visible one."""
         entry = LogEntry(
             timestamp=datetime.now().strftime("%H:%M:%S"),
             message=message,
             verbosity=verbosity,
             severity=severity if severity is not None else self._infer_log_severity(message),
         )
-        self._log_entries.append(entry)
-        if self._log_entry_is_visible(entry):
+        target_session = session_name if session_name is not None else self._current_session_name
+        self._session_logs.append(target_session, entry)
+        if target_session == self._current_session_name and self._log_entry_is_visible(entry):
             self.log.append(self._render_log_entry(entry))
             self._scroll_log_to_bottom()
+
+    def _clear_current_session_log(self) -> None:
+        """Clear just the active session's retained messages, not other histories."""
+        self._session_logs.clear(self._current_session_name)
+        self._render_log_entries()
+        self.statusBar().showMessage(f"Log cleared: {self._current_session_name}")
 
     def _log_verbosity_changed(self) -> None:
         self._render_log_entries()
@@ -2245,7 +2235,7 @@ class MainWindow(QMainWindow):
     def _render_log_entries(self) -> None:
         html_entries = [
             self._render_log_entry(entry)
-            for entry in self._log_entries
+            for entry in self._session_logs.entries_for(self._current_session_name)
             if self._log_entry_is_visible(entry)
         ]
         self.log.setHtml("<br>".join(html_entries))

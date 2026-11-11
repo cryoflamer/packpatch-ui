@@ -643,3 +643,153 @@ def test_auto_push_without_upstream_is_skipped(
                         pytest.fail("git push should not run without an upstream"))
     window._auto_push_after_commit()
     assert "Auto push skipped: No upstream" in window.log.toPlainText()
+
+
+def _set_up_log_sessions(window: MainWindow) -> None:
+    """Create sessions and reload the real selector, leaving default active."""
+    window._session_store.upsert_session(AppSession(name="alpha", log_verbosity="debug"), make_active=False)
+    window._session_store.upsert_session(AppSession(name="beta", log_verbosity="status"), make_active=False)
+    window._reload_session_combo(select_name="default")
+    window._load_current_session()
+
+
+def test_session_log_switching_restores_only_own_history(window: MainWindow) -> None:
+    _set_up_log_sessions(window)
+    window.session_combo.setCurrentText("alpha")
+    window._append_log("alpha status event", verbosity=LogVerbosity.STATUS)
+    window._append_log("alpha debug event", verbosity=LogVerbosity.DEBUG)
+    assert "alpha debug event" in window.log.toPlainText()
+
+    window.session_combo.setCurrentText("beta")
+    assert "alpha status event" not in window.log.toPlainText()
+    assert "alpha debug event" not in window.log.toPlainText()
+    window._append_log("beta status event", verbosity=LogVerbosity.STATUS)
+    window._append_log("beta invisible debug event", verbosity=LogVerbosity.DEBUG)
+
+    window.session_combo.setCurrentText("alpha")
+    text = window.log.toPlainText()
+    assert "alpha status event" in text
+    assert "alpha debug event" in text
+    assert "beta status event" not in text
+    assert "beta invisible debug event" not in text
+    window.session_combo.setCurrentText("beta")
+    assert "beta status event" in window.log.toPlainText()
+    assert "beta invisible debug event" not in window.log.toPlainText()
+    window._set_log_verbosity("debug")
+    assert "beta invisible debug event" in window.log.toPlainText()
+
+
+def test_clear_log_button_only_clears_active_session(window: MainWindow) -> None:
+    _set_up_log_sessions(window)
+    window.session_combo.setCurrentText("alpha")
+    window._append_log("alpha private event", verbosity=LogVerbosity.STATUS)
+    window.session_combo.setCurrentText("beta")
+    window._append_log("beta private event", verbosity=LogVerbosity.STATUS)
+
+    window.clear_log_button.click()
+    assert "beta private event" not in window.log.toPlainText()
+    assert window._session_logs.entries_for("beta") == ()
+    assert "alpha private event" not in window.log.toPlainText()
+    assert window.statusBar().currentMessage() == "Log cleared: beta"
+
+    window.session_combo.setCurrentText("alpha")
+    assert "alpha private event" in window.log.toPlainText()
+
+
+def test_delayed_log_is_attributed_to_originating_session(window: MainWindow) -> None:
+    _set_up_log_sessions(window)
+    window.session_combo.setCurrentText("alpha")
+    source_session = window._current_session_name
+    window.session_combo.setCurrentText("beta")
+    visible_before = window.log.toPlainText()
+
+    window._append_log(
+        "delayed alpha push failure", verbosity=LogVerbosity.DEBUG,
+        severity=LogSeverity.WARNING, session_name=source_session,
+    )
+    assert window.log.toPlainText() == visible_before
+    assert all(item.message != "delayed alpha push failure" for item in window._session_logs.entries_for("beta"))
+
+    window.session_combo.setCurrentText("alpha")
+    assert "delayed alpha push failure" in window.log.toPlainText()
+
+
+def test_save_as_starts_fresh_log_without_losing_source_history(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_up_log_sessions(window)
+    window.session_combo.setCurrentText("alpha")
+    window._append_log("source only message", verbosity=LogVerbosity.STATUS)
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.QInputDialog.getText",
+        lambda *args, **kwargs: ("alpha-copy", True),
+    )
+    window._save_session_as()
+
+    assert window._current_session_name == "alpha-copy"
+    assert "source only message" not in window.log.toPlainText()
+    assert "Session saved as: alpha-copy" in window._session_logs.entries_for("alpha-copy")[-1].message
+    window.session_combo.setCurrentText("alpha")
+    assert "source only message" in window.log.toPlainText()
+
+
+def test_deleted_session_log_not_resurrected_when_name_reused(
+    window: MainWindow, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_up_log_sessions(window)
+    window.session_combo.setCurrentText("alpha")
+    window._append_log("deleted alpha history", verbosity=LogVerbosity.STATUS)
+    window._delete_current_session()
+    assert window._session_logs.entries_for("alpha") == ()
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.QInputDialog.getText",
+        lambda *args, **kwargs: ("alpha", True),
+    )
+    window._new_session()
+    assert window._current_session_name == "alpha"
+    assert "deleted alpha history" not in window.log.toPlainText()
+
+
+def test_session_management_is_locked_during_git_actions(window: MainWindow) -> None:
+    for set_busy in (window._set_pack_busy, window._set_apply_busy):
+        set_busy(True)
+        for button in (window.new_session_button, window.save_session_as_button, window.delete_session_button):
+            assert not button.isEnabled()
+        assert not window.session_combo.isEnabled()
+        set_busy(False)
+        for button in (window.new_session_button, window.save_session_as_button, window.delete_session_button):
+            assert button.isEnabled()
+        assert window.session_combo.isEnabled()
+
+
+def test_session_logs_not_written_to_sessions_json(window: MainWindow) -> None:
+    window._append_log("UNIQUE_PRIVATE_LOG_TOKEN", verbosity=LogVerbosity.STATUS)
+    window._autosave_current_session()
+    content = window._session_store.path.read_text(encoding="utf-8")
+    assert "UNIQUE_PRIVATE_LOG_TOKEN" not in content
+
+
+def test_push_outcome_is_visible_only_in_the_session_that_pushed(
+    window: MainWindow, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from packpatch_ui.core.git_push import PushResult, PushTarget
+
+    _set_up_log_sessions(window)
+    window.session_combo.setCurrentText("alpha")
+    window._repo_info = GitRepoInfo(root=tmp_path, branch="main", is_dirty=False)
+    window.auto_push_after_apply_check.setChecked(True)
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.current_push_target",
+        lambda *_: PushTarget("main", "origin", "refs/heads/main"),
+    )
+    monkeypatch.setattr(
+        "packpatch_ui.ui.main_window.push_current_branch",
+        lambda *args, **kwargs: PushResult(False, "simulated push rejected"),
+    )
+    window._auto_push_after_commit()
+    assert "simulated push rejected" in window.log.toPlainText()
+
+    window.session_combo.setCurrentText("beta")
+    assert "simulated push rejected" not in window.log.toPlainText()
+    window.session_combo.setCurrentText("alpha")
+    assert "simulated push rejected" in window.log.toPlainText()

@@ -62,7 +62,7 @@ Packs are created with `tools/pack-for-chatgpt.sh`. The UI offers three manual o
 - apply patch files with selectable PackPatch/Compatсh strategy;
 - fallback support between `git am` and `git apply`;
 - patch preview panel;
-- structured log output with `Status`, `Details`, and `Debug` verbosity filters; warnings and errors stay visible at every level;
+- session-scoped execution logs with `Status`, `Details`, and `Debug` verbosity filters; warnings and errors stay visible at every level;
 - repeated Compatсh apply detection before `git am`;
 - Compatсh author normalization to the local repository Git identity after apply.
 
@@ -105,6 +105,13 @@ A session remembers:
 - collapsed/expanded UI sections;
 - window geometry;
 - per-session log verbosity.
+
+Each session has its own execution-log history in memory. Switching sessions restores
+that session's messages without copying messages from other repositories. `Clear log`
+clears only the current session; deleting a session discards its log, and `Save as...`
+starts a fresh log for the newly named session. Logs are **not** included in
+`sessions.json` and are discarded on application exit. A callback completing after
+a session switch can route its message to the originating session explicitly.
 
 Settings also cover ZIP patch support (per session), pack history depth, key/certificate inclusion, unversioned-file inclusion, automatic pack creation after successful apply, apply strategy, unversioned apply safety, repository watching, stash-after-undo, and automatic deploy after commit.
 
