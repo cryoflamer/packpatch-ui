@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from packpatch_ui.core.git_pull import pull_current_branch
 from test_git_push import setup_repo, git, commit
 
@@ -79,3 +81,87 @@ def test_pull_uses_legacy_compatible_autostash_override(tmp_path, monkeypatch):
                             "--no-rebase", "--no-recurse-submodules", "--"]
     assert git(repo, "rev-parse", "HEAD") == head
     assert git(repo, "config", "merge.autostash") == "true"
+
+
+def fetched_update(tmp_path):
+    from packpatch_ui.core.git_fetch import fetch_current_branch
+    from packpatch_ui.core.git_push import current_push_target
+
+    repo, remote = setup_repo(tmp_path)
+    head = remote_commit(tmp_path, remote)
+    target = current_push_target(repo)
+    result = fetch_current_branch(repo, expected_target=target)
+    assert result.succeeded and result.tracking_head == head
+    return repo, remote, target, head
+
+
+def test_auto_pull_uses_fetched_commit_without_network(tmp_path):
+    from packpatch_ui.core.git_pull import fast_forward_fetched_branch
+
+    repo, remote, target, head = fetched_update(tmp_path)
+    # The already fetched update must remain usable without a second fetch.
+    remote.rename(tmp_path / 'offline.git')
+    git(repo, 'config', 'merge.autostash', 'true')
+    git(repo, 'config', 'merge.ff', 'false')
+    result = fast_forward_fetched_branch(repo, expected_target=target, fetched_head=head)
+    assert result.succeeded and result.updated, result.stderr
+    assert git(repo, 'rev-parse', 'HEAD') == head
+    assert git(repo, 'status', '--porcelain') == ''
+    assert git(repo, 'stash', 'list') == ''
+    assert git(repo, 'config', 'merge.autostash') == 'true'
+    result = fast_forward_fetched_branch(repo, expected_target=target, fetched_head=head)
+    assert result.succeeded and not result.updated
+
+
+@pytest.mark.parametrize('condition', ['dirty', 'untracked', 'staged', 'diverged', 'operation', 'branch', 'stale'])
+def test_auto_pull_rejects_unsafe_state(tmp_path, condition):
+    from packpatch_ui.core.git_pull import fast_forward_fetched_branch
+
+    repo, remote, target, head = fetched_update(tmp_path)
+    if condition == 'dirty':
+        (repo / 'README.md').write_text('local edits')
+    elif condition in ('untracked', 'staged'):
+        (repo / 'local.txt').write_text('preserve')
+        if condition == 'staged':
+            git(repo, 'add', 'local.txt')
+    elif condition == 'diverged':
+        commit(repo, 'local commit')
+    elif condition == 'operation':
+        (repo / '.git' / 'MERGE_HEAD').write_text(head + '\n')
+    elif condition == 'branch':
+        git(repo, 'checkout', '-b', 'other', '--track', 'origin/main')
+    elif condition == 'stale':
+        git(repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    before = git(repo, 'rev-parse', 'HEAD')
+    status = git(repo, 'status', '--porcelain')
+    result = fast_forward_fetched_branch(repo, expected_target=target, fetched_head=head)
+    assert not result.succeeded and not result.updated
+    assert git(repo, 'rev-parse', 'HEAD') == before
+    assert git(repo, 'status', '--porcelain') == status
+    assert git(repo, 'stash', 'list') == ''
+
+
+def test_auto_pull_preserves_conflicting_ignored_file(tmp_path):
+    from packpatch_ui.core.git_fetch import fetch_current_branch
+    from packpatch_ui.core.git_pull import fast_forward_fetched_branch
+    from packpatch_ui.core.git_push import current_push_target
+
+    repo, remote = setup_repo(tmp_path)
+    other = tmp_path / 'other'
+    git(tmp_path, 'clone', '-b', 'main', str(remote), str(other))
+    git(other, 'config', 'user.name', 'Other')
+    git(other, 'config', 'user.email', 'other@example.invalid')
+    (other / 'local.txt').write_text('remote')
+    git(other, 'add', 'local.txt')
+    git(other, 'commit', '-m', 'Track local.txt')
+    git(other, 'push', 'origin', 'main')
+    (repo / '.git' / 'info' / 'exclude').write_text('local.txt\n')
+    (repo / 'local.txt').write_text('private')
+    target = current_push_target(repo)
+    fetched = fetch_current_branch(repo, expected_target=target)
+    assert fetched.succeeded
+    before = git(repo, 'rev-parse', 'HEAD')
+    result = fast_forward_fetched_branch(repo, expected_target=target, fetched_head=fetched.tracking_head)
+    assert not result.succeeded
+    assert git(repo, 'rev-parse', 'HEAD') == before
+    assert (repo / 'local.txt').read_text() == 'private'

@@ -1064,3 +1064,55 @@ def test_fetch_refreshes_upstream_and_respects_busy_state(window, tmp_path, monk
     assert "1 incoming" in window.upstream_value.text()
     assert "fetched " in window.upstream_value.text()
     assert window.pull_button.isEnabled()
+
+
+@pytest.mark.parametrize('enabled,manual,success,ahead,behind,expected', [
+    (True, False, True, 0, 1, True),
+    (False, False, True, 0, 1, False),
+    (True, True, True, 0, 1, False),
+    (True, False, False, 0, 1, False),
+    (True, False, True, 1, 1, False),
+    (True, False, True, 0, 0, False),
+])
+def test_auto_pull_only_after_successful_periodic_fetch(window, tmp_path, monkeypatch, qtbot,
+                                                        enabled, manual, success, ahead, behind, expected):
+    from packpatch_ui.core.git_fetch import FetchResult
+    from packpatch_ui.core.git_pull import PullResult
+    from packpatch_ui.core.git_push import PushState, PushTarget
+
+    repo = init_repo(tmp_path / 'auto-pull-repo')
+    target = PushTarget('main', 'origin', 'refs/heads/main')
+    monkeypatch.setattr('packpatch_ui.ui.main_window.current_push_target', lambda root: target)
+    monkeypatch.setattr('packpatch_ui.ui.main_window.current_push_state',
+                        lambda root: PushState(target, ahead, behind))
+    window.repo_path_edit.setText(str(repo))
+    window._refresh_repository_status()
+    assert not window.auto_pull_check.isChecked()
+    window.auto_fetch_check.setChecked(True)
+    window.auto_pull_check.setChecked(enabled)
+    calls = []
+    monkeypatch.setattr('packpatch_ui.ui.main_window.fetch_current_branch',
+                        lambda root, **kw: FetchResult(success, 'test fetch', 'fetched-commit' if success else ''))
+
+    def fast_forward(root, *, expected_target, fetched_head):
+        calls.append((root, expected_target, fetched_head))
+        return PullResult(True, 'Fast-forward completed.', updated=True)
+
+    monkeypatch.setattr('packpatch_ui.ui.main_window.fast_forward_fetched_branch', fast_forward)
+    window._start_fetch(manual=manual)
+    qtbot.waitUntil(lambda: not window._fetch_busy and not window._pull_busy, timeout=7000)
+    assert calls == ([(repo, target, 'fetched-commit')] if expected else [])
+    if expected:
+        assert 'Auto-pull: Fast-forward completed.' in window.log.toPlainText()
+
+
+def test_auto_pull_setting_is_disabled_without_auto_fetch(window):
+    window.auto_fetch_check.setChecked(True)
+    window.auto_pull_check.setChecked(True)
+    window.auto_fetch_check.setChecked(False)
+    assert not window.auto_pull_check.isEnabled()
+    assert window.auto_pull_check.isChecked()
+    window._save_current_session()
+    assert window._session_store.get_session(window._current_session_name).auto_pull
+    window.auto_fetch_check.setChecked(True)
+    assert window.auto_pull_check.isEnabled()

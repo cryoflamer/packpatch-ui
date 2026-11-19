@@ -225,3 +225,17 @@ def test_fetch_settings_roundtrip():
     assert AppSession.from_dict(session.to_dict()) == session
     assert AppSession.from_dict({}).fetch_interval_seconds == 60
     assert AppSession.from_dict({"fetch_interval_seconds": "bad"}).fetch_interval_seconds == 60
+
+
+def test_auto_pull_is_explicit_and_persisted_per_session(tmp_path):
+    from packpatch_ui.services.settings_store import new_session_from_template
+
+    assert not AppSession.from_dict({}).auto_pull
+    assert not AppSession.from_dict({'auto_pull': 'false'}).auto_pull
+    enabled = AppSession(name='alpha', auto_pull=True)
+    disabled = AppSession(name='beta')
+    store = SessionStore(tmp_path / 'sessions.json')
+    store.save_sessions([enabled, disabled], active_session='alpha')
+    assert store.get_session('alpha').auto_pull
+    assert not store.get_session('beta').auto_pull
+    assert not new_session_from_template('new', enabled).auto_pull

@@ -47,6 +47,7 @@ class AppSession:
     auto_deploy_after_commit: bool = False
     auto_push_after_apply: bool = False
     auto_fetch: bool = True
+    auto_pull: bool = False
     fetch_interval_seconds: int = 60
     watch_repository_state: bool = True
     selected_files: list[str] = field(default_factory=list)
@@ -91,6 +92,7 @@ class AppSession:
             auto_deploy_after_commit=bool(data.get("auto_deploy_after_commit", False)),
             auto_push_after_apply=bool(data.get("auto_push_after_apply", False)),
             auto_fetch=bool(data.get("auto_fetch", True)),
+            auto_pull=data.get("auto_pull") is True,
             fetch_interval_seconds=_fetch_interval(data.get("fetch_interval_seconds", 60)),
             watch_repository_state=bool(data.get("watch_repository_state", True)),
             selected_files=[str(path) for path in selected_files if str(path)],
@@ -121,6 +123,7 @@ def new_session_from_template(name: str, source: AppSession | None = None) -> Ap
         source,
         name=name,
         repo_path="",
+        auto_pull=False,
         task_name="",
         commit_message="",
         selected_files=[],

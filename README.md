@@ -276,4 +276,20 @@ from 15 to 3600 seconds). Checks are skipped during other Git
 operations and modal dialogs. The upstream row shows incoming/outgoing counts
 relative to the local tracking ref, with the last successful fetch time or a
 cached-data warning on failure. Network fetches have a 30-second timeout.
-Automatic pull is not enabled by this feature; use Pull to integrate changes.
+### Automatic pull
+
+Enable **Automatically pull remote changes (fast-forward only)** in Settings →
+Repository for the selected session. It defaults to off (including new sessions)
+and requires automatic fetch. Manual Fetch remains read-only with respect to HEAD
+and the working tree. After a successful periodic fetch, only a behind-only branch
+with a clean working tree, including untracked files and submodule status, and no
+in-progress Git operation may be updated. The fetched commit is integrated using
+`git -c merge.autostash=false -c submodule.recurse=false merge --ff-only --no-overwrite-ignore`;
+there is no second network request, merge commit, rebase, or automatic stash. A
+changed branch or tracking ref cancels the update. Conflicting ignored files are
+protected by Git. Repeated identical refusal messages are suppressed until the
+condition changes. No automatic push, deploy or pack creation is triggered by pull.
+External concurrent Git processes cannot be locked out by the UI; avoid using
+Auto-pull while manually changing the same checkout. A commit undone locally but
+still present upstream may be restored by automatic pull; disable it before undo
+if that is not desired.

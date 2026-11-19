@@ -40,6 +40,7 @@ class SettingsDialog(QDialog):
         auto_push_after_apply_check: QCheckBox,
         auto_fetch_check: QCheckBox | None = None,
         fetch_interval_spin: QSpinBox | None = None,
+        auto_pull_check: QCheckBox | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -71,6 +72,8 @@ class SettingsDialog(QDialog):
             repository_layout.addWidget(auto_fetch_check)
         if fetch_interval_spin is not None:
             repository_layout.addWidget(fetch_interval_spin)
+        if auto_pull_check is not None:
+            repository_layout.addWidget(auto_pull_check)
 
         deploy_group = QGroupBox("Deploy", self)
         deploy_layout = QVBoxLayout(deploy_group)

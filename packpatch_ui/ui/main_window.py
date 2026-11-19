@@ -44,7 +44,7 @@ from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack_archives, list_patch_files
 from packpatch_ui.core.deploy_runner import deploy_repo
 from packpatch_ui.core.git_fetch import fetch_current_branch
-from packpatch_ui.core.git_pull import pull_current_branch
+from packpatch_ui.core.git_pull import fast_forward_fetched_branch, pull_current_branch
 from packpatch_ui.core.git_push import PushTarget, PushUnavailable, current_push_state, current_push_target, push_current_branch
 from packpatch_ui.core.zip_patch import extracted_patch, patch_members
 from packpatch_ui.core.git_repo import (
@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
         self._fetch_busy = False
         self._fetch_context = None
         self._fetch_status = "not fetched"
+        self._last_auto_pull_notice = None
         self._dialog_positioning_filter = DialogPositioningFilter(self, report=self._report_dialog_position)
         QApplication.instance().installEventFilter(self._dialog_positioning_filter)
 
@@ -155,6 +156,9 @@ class MainWindow(QMainWindow):
         self.fetch_button = QPushButton("Fetch", self)
         self.upstream_value = QLabel("-", self)
         self.auto_fetch_check = QCheckBox("Automatically check for remote changes", self)
+        self.auto_pull_check = QCheckBox("Automatically pull remote changes (fast-forward only)", self)
+        self.auto_pull_check.setToolTip("Requires automatic fetch. Only a clean, behind-only branch is updated. "
+                                        "May restore commits still present upstream after a local undo.")
         self.fetch_interval_spin = QSpinBox(self)
         self.fetch_interval_spin.setRange(15, 3600)
         self.fetch_interval_spin.setValue(60)
@@ -204,6 +208,7 @@ class MainWindow(QMainWindow):
             auto_push_after_apply_check=self.auto_push_after_apply_check,
             auto_fetch_check=self.auto_fetch_check,
             fetch_interval_spin=self.fetch_interval_spin,
+            auto_pull_check=self.auto_pull_check,
             parent=self,
         )
 
@@ -557,7 +562,9 @@ class MainWindow(QMainWindow):
         self._repository_watch_timer.timeout.connect(self._poll_repository_state)
         self._fetch_timer.timeout.connect(self._auto_fetch)
         self.fetch_button.clicked.connect(lambda: self._start_fetch(manual=True))
+        self.auto_fetch_check.toggled.connect(self.auto_pull_check.setEnabled)
         self.auto_fetch_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.auto_pull_check.toggled.connect(lambda *_: self._schedule_autosave())
         self.fetch_interval_spin.valueChanged.connect(self._fetch_interval_changed)
         self.log_verbosity_combo.currentIndexChanged.connect(self._log_verbosity_changed)
         self.clear_log_button.clicked.connect(self._clear_current_session_log)
@@ -674,6 +681,9 @@ class MainWindow(QMainWindow):
             self.stash_changes_after_undo_check.setChecked(session.stash_changes_after_undo)
             self.watch_repository_state_check.setChecked(session.watch_repository_state)
             self.auto_fetch_check.setChecked(session.auto_fetch)
+            self.auto_pull_check.setEnabled(session.auto_fetch)
+            self.auto_pull_check.setChecked(session.auto_pull)
+            self._last_auto_pull_notice = None
             self.fetch_interval_spin.setValue(session.fetch_interval_seconds)
             self._fetch_timer.setInterval(self.fetch_interval_spin.value() * 1000)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
@@ -804,6 +814,7 @@ class MainWindow(QMainWindow):
             stash_changes_after_undo=self.stash_changes_after_undo_check.isChecked(),
             watch_repository_state=self.watch_repository_state_check.isChecked(),
             auto_fetch=self.auto_fetch_check.isChecked(),
+            auto_pull=self.auto_pull_check.isChecked(),
             fetch_interval_seconds=self.fetch_interval_spin.value(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
@@ -1279,6 +1290,7 @@ class MainWindow(QMainWindow):
                 return
             timer.stop()
             timer.deleteLater()
+            fetched_head = ""
             try:
                 result = future.result()
                 self._refresh_upstream_status()
@@ -1289,6 +1301,8 @@ class MainWindow(QMainWindow):
                 if manual or (not result.succeeded and previous_status != self._fetch_status):
                     self._append_log(result.message, severity=LogSeverity.INFO if result.succeeded else LogSeverity.WARNING)
                 self._refresh_commit_list(log_result=False)
+                if result.succeeded and not manual:
+                    fetched_head = result.tracking_head
             except Exception as exc:
                 self._fetch_status = "fetch failed; counts cached"
                 self._append_log(f"Fetch failed: {exc}", severity=LogSeverity.WARNING)
@@ -1296,25 +1310,57 @@ class MainWindow(QMainWindow):
             finally:
                 self._fetch_busy = False
                 self._refresh_busy_controls()
+            if fetched_head:
+                self._auto_pull_after_fetch(context, fetched_head)
 
         timer.timeout.connect(finish)
         timer.start(100)
 
+    def _auto_pull_after_fetch(self, context, fetched_head: str) -> None:
+        if (not self.auto_fetch_check.isChecked() or not self.auto_pull_check.isChecked()
+                or self._repo_info is None or self._loading_session or self._repository_watch_busy
+                or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy
+                or self._fetch_busy or QApplication.activeModalWidget() is not None):
+            return
+        root = self._repo_info.root
+        try:
+            if find_git_root(Path(self.repo_path_edit.text().strip()).expanduser()) != root:
+                return
+            state = current_push_state(root)
+        except (PushUnavailable, OSError):
+            return
+        if context != (root, state.target, self._current_session_name) or context != self._fetch_context:
+            return
+        if state.ahead or not state.behind:
+            self._last_auto_pull_notice = None
+            return
+        self._start_pull(expected_target=state.target, fetched_head=fetched_head)
+
     def _pull_manually(self) -> None:
+        self._start_pull()
+
+    def _start_pull(self, *, expected_target: PushTarget | None = None, fetched_head: str = "") -> None:
         if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy:
             return
         root = self._repo_info.root
+        auto = bool(fetched_head)
         try:
             target = current_push_target(root)
         except (PushUnavailable, OSError) as exc:
             self._append_log(f"Cannot pull: {exc}", severity=LogSeverity.WARNING)
             self.statusBar().showMessage("Pull unavailable")
             return
+        if expected_target is not None and target != expected_target:
+            return
         self._pull_busy = True
         self._refresh_busy_controls()
-        self.statusBar().showMessage("Pulling...")
+        self.statusBar().showMessage("Auto-pulling..." if auto else "Pulling...")
         executor = ThreadPoolExecutor(max_workers=1)
-        future = executor.submit(pull_current_branch, root, expected_target=target)
+        if auto:
+            future = executor.submit(fast_forward_fetched_branch, root, expected_target=target,
+                                     fetched_head=fetched_head)
+        else:
+            future = executor.submit(pull_current_branch, root, expected_target=target)
         executor.shutdown(wait=False)
         timer = QTimer(self)
 
@@ -1325,8 +1371,14 @@ class MainWindow(QMainWindow):
             timer.deleteLater()
             try:
                 result = future.result()
-                self._append_log(result.message, verbosity=LogVerbosity.STATUS, severity=LogSeverity.INFO if result.succeeded else LogSeverity.WARNING)
-                for output in (result.stdout, result.stderr):
+                label = "Auto-pull: " + result.message if auto else result.message
+                notice = (root, target, self._current_session_name, result.message, result.stderr)
+                report = not auto or result.updated or (not result.succeeded and notice != self._last_auto_pull_notice)
+                if auto:
+                    self._last_auto_pull_notice = None if result.succeeded else notice
+                if report:
+                    self._append_log(label, verbosity=LogVerbosity.STATUS, severity=LogSeverity.INFO if result.succeeded else LogSeverity.WARNING)
+                for output in (result.stdout, result.stderr) if report else ():
                     for line in output.splitlines():
                         if not line.strip():
                             continue
@@ -1334,8 +1386,11 @@ class MainWindow(QMainWindow):
                             self._append_log(line.strip(), verbosity=LogVerbosity.STATUS, severity=LogSeverity.ERROR)
                         else:
                             self._append_log(line, verbosity=LogVerbosity.DEBUG, severity=LogSeverity.INFO)
-                self._refresh_repository_status(self.file_tree.selected_paths(), log_result=False)
-                self.statusBar().showMessage(result.message)
+                if not auto or result.updated:
+                    self._refresh_repository_status(self.file_tree.selected_paths(), log_result=False)
+                else:
+                    self._refresh_upstream_status()
+                self.statusBar().showMessage(label)
             except Exception as exc:
                 self._append_log(f"Pull failed: {exc}", severity=LogSeverity.WARNING)
                 self.statusBar().showMessage("Pull failed")

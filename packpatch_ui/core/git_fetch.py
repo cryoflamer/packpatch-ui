@@ -15,6 +15,7 @@ FETCH_TIMEOUT_SECONDS = 30
 class FetchResult:
     succeeded: bool
     message: str
+    tracking_head: str = ""
 
 
 def fetch_current_branch(root: Path, *, expected_target: PushTarget) -> FetchResult:
@@ -38,7 +39,11 @@ def fetch_current_branch(root: Path, *, expected_target: PushTarget) -> FetchRes
         )
         if result.returncode:
             return FetchResult(False, result.stderr.strip() or f"Git fetch failed (exit {result.returncode}).")
-        return FetchResult(True, "Remote tracking ref refreshed.")
+        head = subprocess.run(
+            ["git", "rev-parse", "--verify", tracking], cwd=root, capture_output=True,
+            text=True, check=True, timeout=FETCH_TIMEOUT_SECONDS,
+        ).stdout.strip()
+        return FetchResult(True, "Remote tracking ref refreshed.", head)
     except subprocess.TimeoutExpired:
         return FetchResult(False, "Git fetch timed out.")
     except (PushUnavailable, OSError, subprocess.CalledProcessError) as exc:
