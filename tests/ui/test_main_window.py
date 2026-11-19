@@ -42,6 +42,7 @@ def window(qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> MainWindow
     instance = MainWindow()
     instance._autosave_timer.stop()
     instance._repository_watch_timer.stop()
+    instance._fetch_timer.stop()
     qtbot.addWidget(instance)
     return instance
 
@@ -1030,3 +1031,36 @@ def test_manual_pull_failure_shows_git_errors_in_status(window, tmp_path, monkey
     assert "ordinary output" in debug
     assert "remote: progress" in debug
     assert debug.count("fatal: connection failed") == 1
+
+
+def test_fetch_refreshes_upstream_and_respects_busy_state(window, tmp_path, monkeypatch, qtbot):
+    from threading import Event
+    from packpatch_ui.core.git_fetch import FetchResult
+    from packpatch_ui.core.git_push import PushState, PushTarget
+
+    repo = init_repo(tmp_path / "fetch-repo")
+    target = PushTarget("main", "origin", "refs/heads/main")
+    release = Event()
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_target", lambda root: target)
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_state",
+                        lambda root: PushState(target, 0, int(release.is_set())))
+    window.repo_path_edit.setText(str(repo))
+    window._refresh_repository_status()
+    def fake_fetch(root, *, expected_target):
+        return FetchResult(release.wait(5), "test fetch")
+    monkeypatch.setattr("packpatch_ui.ui.main_window.fetch_current_branch", fake_fetch)
+    window.auto_fetch_check.setChecked(False)
+    window._auto_fetch()
+    assert not window._fetch_busy
+    window.fetch_button.click()
+    try:
+        assert window._fetch_busy
+        assert not window.pull_button.isEnabled()
+        assert not window.apply_latest_patch_button.isEnabled()
+        assert not window.session_combo.isEnabled()
+    finally:
+        release.set()
+        qtbot.waitUntil(lambda: not window._fetch_busy, timeout=7000)
+    assert "1 incoming" in window.upstream_value.text()
+    assert "fetched " in window.upstream_value.text()
+    assert window.pull_button.isEnabled()

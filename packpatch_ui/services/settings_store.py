@@ -14,6 +14,13 @@ SESSIONS_FILE_NAME = "sessions.json"
 DEFAULT_SESSION_NAME = "default"
 
 
+def _fetch_interval(value: Any) -> int:
+    try:
+        return max(15, min(3600, int(value)))
+    except (TypeError, ValueError, OverflowError):
+        return 60
+
+
 @dataclass(slots=True)
 class AppSession:
     """Saved UI state for a repository workflow."""
@@ -39,6 +46,8 @@ class AppSession:
     deploy_dir: str = ""
     auto_deploy_after_commit: bool = False
     auto_push_after_apply: bool = False
+    auto_fetch: bool = True
+    fetch_interval_seconds: int = 60
     watch_repository_state: bool = True
     selected_files: list[str] = field(default_factory=list)
     file_filter: str = ""
@@ -81,6 +90,8 @@ class AppSession:
             deploy_dir=str(data.get("deploy_dir") or ""),
             auto_deploy_after_commit=bool(data.get("auto_deploy_after_commit", False)),
             auto_push_after_apply=bool(data.get("auto_push_after_apply", False)),
+            auto_fetch=bool(data.get("auto_fetch", True)),
+            fetch_interval_seconds=_fetch_interval(data.get("fetch_interval_seconds", 60)),
             watch_repository_state=bool(data.get("watch_repository_state", True)),
             selected_files=[str(path) for path in selected_files if str(path)],
             file_filter=str(data.get("file_filter") or ""),

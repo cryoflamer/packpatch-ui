@@ -265,3 +265,15 @@ python -m pytest
 Core workflow tests use real temporary Git repositories. Patch tests exercise PackPatch and Compatсh apply behavior, fallback, repeated-apply detection, dirty-tree safety, dry-run behavior, author normalization, and undo-with-stash semantics. Pack tests exercise full, full + untracked, changed, and slice creation; preserved source history; working-tree state; unversioned and sensitive-file rules; archive metadata; and generated ChatGPT workflow instructions. Additional core and service tests cover session persistence and legacy defaults, HEAD-only deploy behavior, artifact listing/deletion, and repository state snapshots used by the runtime watcher. Qt workflow tests cover busy controls, log verbosity filtering and re-rendering, per-session log settings, and current/all-session cleanup confirmations and behavior.
 
 The same test suite runs automatically in GitHub Actions on every push and pull request using Python 3.10. The workflow is defined in `.github/workflows/tests.yml`.
+
+### Remote tracking checks
+
+`Fetch` in Git commits refreshes the current branch's configured remote-tracking
+ref in the background without changing HEAD, the index or working files.
+Settings → Repository → Automatically check for remote changes enables the same
+check for the active session (enabled by default, interval 60 seconds, configurable
+from 15 to 3600 seconds). Checks are skipped during other Git
+operations and modal dialogs. The upstream row shows incoming/outgoing counts
+relative to the local tracking ref, with the last successful fetch time or a
+cached-data warning on failure. Network fetches have a 30-second timeout.
+Automatic pull is not enabled by this feature; use Pull to integrate changes.

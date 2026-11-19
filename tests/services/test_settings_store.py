@@ -216,3 +216,12 @@ def test_explicit_global_geometry_replaces_legacy_geometry(tmp_path: Path) -> No
     store.upsert_session(AppSession(name="alpha", window_geometry="another-legacy"),
                          window_geometry="new-current")
     assert store.load_window_geometry() == "new-current"
+
+
+def test_fetch_settings_roundtrip():
+    session = AppSession.from_dict({"auto_fetch": False, "fetch_interval_seconds": 120})
+    assert not session.auto_fetch
+    assert session.fetch_interval_seconds == 120
+    assert AppSession.from_dict(session.to_dict()) == session
+    assert AppSession.from_dict({}).fetch_interval_seconds == 60
+    assert AppSession.from_dict({"fetch_interval_seconds": "bad"}).fetch_interval_seconds == 60

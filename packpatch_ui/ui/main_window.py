@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack_archives, list_patch_files
 from packpatch_ui.core.deploy_runner import deploy_repo
+from packpatch_ui.core.git_fetch import fetch_current_branch
 from packpatch_ui.core.git_pull import pull_current_branch
 from packpatch_ui.core.git_push import PushTarget, PushUnavailable, current_push_state, current_push_target, push_current_branch
 from packpatch_ui.core.zip_patch import extracted_patch, patch_members
@@ -96,6 +97,9 @@ class MainWindow(QMainWindow):
         self._apply_busy = False
         self._push_busy = False
         self._pull_busy = False
+        self._fetch_busy = False
+        self._fetch_context = None
+        self._fetch_status = "not fetched"
         self._dialog_positioning_filter = DialogPositioningFilter(self, report=self._report_dialog_position)
         QApplication.instance().installEventFilter(self._dialog_positioning_filter)
 
@@ -148,6 +152,14 @@ class MainWindow(QMainWindow):
         self.commit_message_edit.setPlaceholderText("Apply commit message for PackPatch, e.g. Update UI wording")
         self.undo_last_commit_button = QPushButton("Undo last commit", self)
         self.refresh_commits_button = QPushButton("Refresh commits", self)
+        self.fetch_button = QPushButton("Fetch", self)
+        self.upstream_value = QLabel("-", self)
+        self.auto_fetch_check = QCheckBox("Automatically check for remote changes", self)
+        self.fetch_interval_spin = QSpinBox(self)
+        self.fetch_interval_spin.setRange(15, 3600)
+        self.fetch_interval_spin.setValue(60)
+        self.fetch_interval_spin.setPrefix("Fetch interval: ")
+        self.fetch_interval_spin.setSuffix(" s")
         self.pull_button = QPushButton("Pull", self)
         self.push_button = QPushButton("Push", self)
         self.copy_commit_hash_button = QPushButton("Copy hash", self)
@@ -190,6 +202,8 @@ class MainWindow(QMainWindow):
             watch_repository_state_check=self.watch_repository_state_check,
             auto_deploy_after_commit_check=self.auto_deploy_after_commit_check,
             auto_push_after_apply_check=self.auto_push_after_apply_check,
+            auto_fetch_check=self.auto_fetch_check,
+            fetch_interval_spin=self.fetch_interval_spin,
             parent=self,
         )
 
@@ -237,6 +251,8 @@ class MainWindow(QMainWindow):
 
         self._repository_watch_timer = QTimer(self)
         self._repository_watch_timer.setInterval(1000)
+        self._fetch_timer = QTimer(self)
+        self._fetch_timer.setInterval(60000)
 
         self.setWindowTitle(APP_NAME)
         self.resize(1120, 780)
@@ -250,6 +266,7 @@ class MainWindow(QMainWindow):
         self._restore_window_geometry(self._session_store.load_window_geometry())
         self._refresh_busy_controls()
         self._repository_watch_timer.start()
+        self._fetch_timer.start()
         if not self._geometry_restore_done:
             self._center_on_primary_screen()
             self._geometry_restore_done = True
@@ -391,11 +408,14 @@ class MainWindow(QMainWindow):
         commit_repo_summary.addWidget(self.branch_value, 1, 1)
         commit_repo_summary.addWidget(QLabel("Status:", widget), 1, 2)
         commit_repo_summary.addWidget(self.status_value, 1, 3)
+        commit_repo_summary.addWidget(QLabel("Upstream:", widget), 2, 0)
+        commit_repo_summary.addWidget(self.upstream_value, 2, 1, 1, 3)
         commit_repo_summary.setColumnStretch(1, 1)
         commit_history_layout.addLayout(commit_repo_summary)
 
         commit_history_controls = QHBoxLayout()
         commit_history_controls.addWidget(self.refresh_commits_button)
+        commit_history_controls.addWidget(self.fetch_button)
         commit_history_controls.addWidget(self.pull_button)
         commit_history_controls.addWidget(self.push_button)
         commit_history_controls.addWidget(self.copy_commit_hash_button)
@@ -535,6 +555,10 @@ class MainWindow(QMainWindow):
         self.settings_dialog.clear_all_sessions_files_requested.connect(self._clear_all_sessions_files)
         self._autosave_timer.timeout.connect(self._autosave_current_session)
         self._repository_watch_timer.timeout.connect(self._poll_repository_state)
+        self._fetch_timer.timeout.connect(self._auto_fetch)
+        self.fetch_button.clicked.connect(lambda: self._start_fetch(manual=True))
+        self.auto_fetch_check.toggled.connect(lambda *_: self._schedule_autosave())
+        self.fetch_interval_spin.valueChanged.connect(self._fetch_interval_changed)
         self.log_verbosity_combo.currentIndexChanged.connect(self._log_verbosity_changed)
         self.clear_log_button.clicked.connect(self._clear_current_session_log)
 
@@ -649,6 +673,9 @@ class MainWindow(QMainWindow):
             self.allow_unversioned_apply_check.setChecked(session.allow_unversioned_apply)
             self.stash_changes_after_undo_check.setChecked(session.stash_changes_after_undo)
             self.watch_repository_state_check.setChecked(session.watch_repository_state)
+            self.auto_fetch_check.setChecked(session.auto_fetch)
+            self.fetch_interval_spin.setValue(session.fetch_interval_seconds)
+            self._fetch_timer.setInterval(self.fetch_interval_spin.value() * 1000)
             self.auto_export_pack_check.setChecked(session.auto_export_pack)
             self.include_sensitive_files_check.setChecked(session.include_sensitive_files)
             self.include_unversioned_files_check.setChecked(session.include_unversioned_files)
@@ -776,6 +803,8 @@ class MainWindow(QMainWindow):
             allow_unversioned_apply=self.allow_unversioned_apply_check.isChecked(),
             stash_changes_after_undo=self.stash_changes_after_undo_check.isChecked(),
             watch_repository_state=self.watch_repository_state_check.isChecked(),
+            auto_fetch=self.auto_fetch_check.isChecked(),
+            fetch_interval_seconds=self.fetch_interval_spin.value(),
             auto_export_pack=self.auto_export_pack_check.isChecked(),
             include_sensitive_files=self.include_sensitive_files_check.isChecked(),
             include_unversioned_files=self.include_unversioned_files_check.isChecked(),
@@ -871,9 +900,9 @@ class MainWindow(QMainWindow):
         self._schedule_autosave()
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        if self._pull_busy:
+        if self._pull_busy or self._fetch_busy:
             event.ignore()
-            self.statusBar().showMessage("Wait for Pull to finish")
+            self.statusBar().showMessage("Wait for Pull/Fetch to finish")
             return
         self._autosave_current_session()
         super().closeEvent(event)
@@ -965,7 +994,7 @@ class MainWindow(QMainWindow):
         if (
             self._repository_watch_busy
             or self._push_busy
-            or self._pull_busy
+            or self._pull_busy or self._fetch_busy
             or self._loading_session
             or not self.watch_repository_state_check.isChecked()
         ):
@@ -1021,6 +1050,10 @@ class MainWindow(QMainWindow):
 
     def _set_no_repo(self, message: str) -> None:
         self._repo_info = None
+        self._fetch_context = None
+        self._fetch_status = "not fetched"
+        self.upstream_value.setText("-")
+        self.fetch_button.setEnabled(False)
         self._repo_state_snapshot = None
         self.pull_button.setEnabled(False)
         self.push_button.setEnabled(False)
@@ -1185,8 +1218,90 @@ class MainWindow(QMainWindow):
         else:
             self._append_log("Auto deploy after commit failed.")
 
+    def _refresh_upstream_status(self) -> None:
+        if self._repo_info is None:
+            self.upstream_value.setText("-")
+            return
+        try:
+            state = current_push_state(self._repo_info.root)
+        except (PushUnavailable, OSError) as exc:
+            self._fetch_context = None
+            self._fetch_status = "not fetched"
+            self.upstream_value.setText("No usable upstream")
+            self.upstream_value.setToolTip(str(exc))
+            return
+        context = (self._repo_info.root, state.target, self._current_session_name)
+        if context != self._fetch_context:
+            self._fetch_context = context
+            self._fetch_status = "not fetched"
+        relation = f"↑ {state.ahead} outgoing / ↓ {state.behind} incoming"
+        if state.ahead and state.behind:
+            relation += " (diverged)"
+        elif not state.ahead and not state.behind:
+            relation = "Up to date (tracking ref)"
+        self.upstream_value.setText(f"{state.target.description}: {relation} — {self._fetch_status}")
+        self.upstream_value.setToolTip("Counts are relative to the local remote-tracking ref, not a live server query.")
+
+    def _fetch_interval_changed(self, seconds: int) -> None:
+        self._fetch_timer.setInterval(seconds * 1000)
+        self._schedule_autosave()
+
+    def _auto_fetch(self) -> None:
+        if self.auto_fetch_check.isChecked():
+            self._start_fetch(manual=False)
+
+    def _start_fetch(self, *, manual: bool) -> None:
+        if (self._repo_info is None or self._loading_session or self._repository_watch_busy
+                or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy
+                or self._fetch_busy or QApplication.activeModalWidget() is not None):
+            return
+        root = self._repo_info.root
+        try:
+            target = current_push_target(root)
+        except (PushUnavailable, OSError) as exc:
+            if manual:
+                self._append_log(f"Cannot fetch: {exc}", severity=LogSeverity.WARNING)
+            return
+        context = (root, target, self._current_session_name)
+        previous_status = self._fetch_status if context == self._fetch_context else "not fetched"
+        self._fetch_context = context
+        self._fetch_status = "fetching…"
+        self._fetch_busy = True
+        self._refresh_upstream_status()
+        self._refresh_busy_controls()
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(fetch_current_branch, root, expected_target=target)
+        executor.shutdown(wait=False)
+        timer = QTimer(self)
+
+        def finish() -> None:
+            if not future.done():
+                return
+            timer.stop()
+            timer.deleteLater()
+            try:
+                result = future.result()
+                self._refresh_upstream_status()
+                if self._fetch_context != context:
+                    return
+                self._fetch_status = ("fetched " + datetime.now().strftime("%H:%M:%S")
+                                      if result.succeeded else "fetch failed; counts cached")
+                if manual or (not result.succeeded and previous_status != self._fetch_status):
+                    self._append_log(result.message, severity=LogSeverity.INFO if result.succeeded else LogSeverity.WARNING)
+                self._refresh_commit_list(log_result=False)
+            except Exception as exc:
+                self._fetch_status = "fetch failed; counts cached"
+                self._append_log(f"Fetch failed: {exc}", severity=LogSeverity.WARNING)
+                self._refresh_upstream_status()
+            finally:
+                self._fetch_busy = False
+                self._refresh_busy_controls()
+
+        timer.timeout.connect(finish)
+        timer.start(100)
+
     def _pull_manually(self) -> None:
-        if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy:
+        if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy:
             return
         root = self._repo_info.root
         try:
@@ -1233,7 +1348,7 @@ class MainWindow(QMainWindow):
 
     def _push_manually(self) -> None:
         """Ask before explicitly pushing the checked-out branch to its upstream."""
-        if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy:
+        if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy:
             return
         try:
             state = current_push_state(self._repo_info.root)
@@ -1269,7 +1384,7 @@ class MainWindow(QMainWindow):
         self._push_to_upstream(auto=True, expected_target=target)
 
     def _push_to_upstream(self, *, auto: bool = False, expected_target: PushTarget | None = None) -> bool:
-        if self._repo_info is None or self._push_busy or self._pull_busy:
+        if self._repo_info is None or self._push_busy or self._pull_busy or self._fetch_busy:
             return False
         self._push_busy = True
         self._refresh_busy_controls()
@@ -1312,7 +1427,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def _refresh_busy_controls(self) -> None:
-        any_busy = self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy
+        any_busy = self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy
 
         self.create_pack_button.setEnabled(not any_busy)
         self.export_new_pack_button.setEnabled(not any_busy)
@@ -1320,20 +1435,22 @@ class MainWindow(QMainWindow):
         self._refresh_export_pack_button()
         self.create_pack_button.setText("Creating..." if self._pack_busy else "Create pack")
 
+        self.fetch_button.setEnabled(not any_busy and self._repo_info is not None)
+        self.fetch_button.setText("Fetching..." if self._fetch_busy else "Fetch")
         self.pull_button.setEnabled(not any_busy and self._repo_info is not None)
         self.pull_button.setText("Pulling..." if self._pull_busy else "Pull")
-        self.repo_path_edit.setEnabled(not self._pull_busy)
-        self.refresh_commits_button.setEnabled(not self._pull_busy)
-        self.settings_button.setEnabled(not self._pull_busy)
+        self.repo_path_edit.setEnabled(not (self._pull_busy or self._fetch_busy))
+        self.refresh_commits_button.setEnabled(not (self._pull_busy or self._fetch_busy))
+        self.settings_button.setEnabled(not (self._pull_busy or self._fetch_busy))
         self.push_button.setEnabled(not any_busy and self._repo_info is not None)
         self.push_button.setText("Pushing..." if self._push_busy else "Push")
         self.apply_latest_patch_button.setEnabled(not any_busy)
         self.apply_latest_patch_button.setText("Applying..." if self._apply_busy else "Apply patch")
 
-        self.check_latest_patch_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
-        self.dry_run_patch_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
-        self.undo_last_commit_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
-        self.deploy_repo_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
+        self.check_latest_patch_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy))
+        self.dry_run_patch_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy))
+        self.undo_last_commit_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy))
+        self.deploy_repo_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy))
         self.browse_button.setEnabled(not any_busy)
         self.refresh_button.setEnabled(not any_busy)
         self.clear_session_files_button.setEnabled(not any_busy)
@@ -1354,7 +1471,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_export_pack_button(self) -> None:
         self.export_pack_button.setEnabled(
-            not (self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy)
+            not (self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy)
             and self._selected_pack_for_export() is not None
         )
 
@@ -2104,7 +2221,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Patch check failed with exit code {result.returncode}")
 
     def _apply_latest_patch(self, *, dry_run: bool) -> None:
-        if self._apply_busy or self._push_busy or self._pull_busy:
+        if self._apply_busy or self._push_busy or self._pull_busy or self._fetch_busy:
             return
 
         self._set_apply_busy(True)
@@ -2256,6 +2373,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_commit_list(self, *, log_result: bool = True) -> None:
         self.commit_list.clear()
+        self._refresh_upstream_status()
         if self._repo_info is None:
             if log_result:
                 self._append_log("Cannot refresh commits: no git repository selected.")

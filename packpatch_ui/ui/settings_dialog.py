@@ -38,6 +38,8 @@ class SettingsDialog(QDialog):
         watch_repository_state_check: QCheckBox,
         auto_deploy_after_commit_check: QCheckBox,
         auto_push_after_apply_check: QCheckBox,
+        auto_fetch_check: QCheckBox | None = None,
+        fetch_interval_spin: QSpinBox | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -65,6 +67,10 @@ class SettingsDialog(QDialog):
         repository_layout = QVBoxLayout(repository_group)
         repository_layout.addWidget(watch_repository_state_check)
         repository_layout.addWidget(auto_push_after_apply_check)
+        if auto_fetch_check is not None:
+            repository_layout.addWidget(auto_fetch_check)
+        if fetch_interval_spin is not None:
+            repository_layout.addWidget(fetch_interval_spin)
 
         deploy_group = QGroupBox("Deploy", self)
         deploy_layout = QVBoxLayout(deploy_group)
