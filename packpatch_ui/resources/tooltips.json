@@ -35,6 +35,7 @@
   "patch.preview": "Read-only preview of the selected patch. Large patches are truncated for UI responsiveness.",
   "commit.message": "Optional commit message used only when applying a PackPatch via git apply. Compatсh patches carry their own commit message.",
   "commit.list": "Recent git commits from the selected repository.",
+  "commit.pull": "Fetch and fast-forward the current upstream; requires a clean working tree and never rebases or merges divergent histories.",
   "commit.push": "Push only the current branch to its configured upstream. No network call or confirmation when local tracking shows nothing to push. No force push or new upstream.",
   "commit.auto_push": "After Apply patch successfully creates a new commit, push the current branch to its existing remote upstream. Off by default. A failed push leaves the local commit intact.",
   "commit.refresh": "Refresh the recent commits list.",

@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor
 from typing import Iterator
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
 from packpatch_ui.config import APP_NAME
 from packpatch_ui.core.artifacts import ArtifactInfo, delete_artifact, list_pack_archives, list_patch_files
 from packpatch_ui.core.deploy_runner import deploy_repo
+from packpatch_ui.core.git_pull import pull_current_branch
 from packpatch_ui.core.git_push import PushTarget, PushUnavailable, current_push_state, current_push_target, push_current_branch
 from packpatch_ui.core.zip_patch import extracted_patch, patch_members
 from packpatch_ui.core.git_repo import (
@@ -93,6 +95,7 @@ class MainWindow(QMainWindow):
         self._pack_busy = False
         self._apply_busy = False
         self._push_busy = False
+        self._pull_busy = False
         self._dialog_positioning_filter = DialogPositioningFilter(self, report=self._report_dialog_position)
         QApplication.instance().installEventFilter(self._dialog_positioning_filter)
 
@@ -145,6 +148,7 @@ class MainWindow(QMainWindow):
         self.commit_message_edit.setPlaceholderText("Apply commit message for PackPatch, e.g. Update UI wording")
         self.undo_last_commit_button = QPushButton("Undo last commit", self)
         self.refresh_commits_button = QPushButton("Refresh commits", self)
+        self.pull_button = QPushButton("Pull", self)
         self.push_button = QPushButton("Push", self)
         self.copy_commit_hash_button = QPushButton("Copy hash", self)
         self.commit_list = QListWidget(self)
@@ -392,6 +396,7 @@ class MainWindow(QMainWindow):
 
         commit_history_controls = QHBoxLayout()
         commit_history_controls.addWidget(self.refresh_commits_button)
+        commit_history_controls.addWidget(self.pull_button)
         commit_history_controls.addWidget(self.push_button)
         commit_history_controls.addWidget(self.copy_commit_hash_button)
         commit_history_controls.addWidget(self.undo_last_commit_button)
@@ -494,6 +499,7 @@ class MainWindow(QMainWindow):
             self.git_commits_section: "commit.list",
             self.commit_list: "commit.list",
             self.refresh_commits_button: "commit.refresh",
+            self.pull_button: "commit.pull",
             self.push_button: "commit.push",
             self.copy_commit_hash_button: "commit.copy_hash",
             self.undo_last_commit_button: "commit.undo",
@@ -562,6 +568,7 @@ class MainWindow(QMainWindow):
         self.file_filter_edit.textChanged.connect(self._file_filter_changed)
         self.undo_last_commit_button.clicked.connect(self._undo_last_commit)
         self.refresh_commits_button.clicked.connect(self._refresh_commit_list)
+        self.pull_button.clicked.connect(self._pull_manually)
         self.push_button.clicked.connect(self._push_manually)
         self.copy_commit_hash_button.clicked.connect(self._copy_selected_commit_hash)
 
@@ -864,6 +871,10 @@ class MainWindow(QMainWindow):
         self._schedule_autosave()
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._pull_busy:
+            event.ignore()
+            self.statusBar().showMessage("Wait for Pull to finish")
+            return
         self._autosave_current_session()
         super().closeEvent(event)
 
@@ -954,6 +965,7 @@ class MainWindow(QMainWindow):
         if (
             self._repository_watch_busy
             or self._push_busy
+            or self._pull_busy
             or self._loading_session
             or not self.watch_repository_state_check.isChecked()
         ):
@@ -1010,6 +1022,7 @@ class MainWindow(QMainWindow):
     def _set_no_repo(self, message: str) -> None:
         self._repo_info = None
         self._repo_state_snapshot = None
+        self.pull_button.setEnabled(False)
         self.push_button.setEnabled(False)
         self.root_value.setText("-")
         self.root_value.setToolTip("")
@@ -1172,9 +1185,50 @@ class MainWindow(QMainWindow):
         else:
             self._append_log("Auto deploy after commit failed.")
 
+    def _pull_manually(self) -> None:
+        if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy:
+            return
+        root = self._repo_info.root
+        try:
+            target = current_push_target(root)
+        except (PushUnavailable, OSError) as exc:
+            self._append_log(f"Cannot pull: {exc}", severity=LogSeverity.WARNING)
+            self.statusBar().showMessage("Pull unavailable")
+            return
+        self._pull_busy = True
+        self._refresh_busy_controls()
+        self.statusBar().showMessage("Pulling...")
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(pull_current_branch, root, expected_target=target)
+        executor.shutdown(wait=False)
+        timer = QTimer(self)
+
+        def finish() -> None:
+            if not future.done():
+                return
+            timer.stop()
+            timer.deleteLater()
+            try:
+                result = future.result()
+                self._append_log(result.message, verbosity=LogVerbosity.STATUS, severity=LogSeverity.INFO if result.succeeded else LogSeverity.WARNING)
+                for output in (result.stdout, result.stderr):
+                    if output.strip():
+                        self._append_log(output.strip(), verbosity=LogVerbosity.DEBUG)
+                self._refresh_repository_status(self.file_tree.selected_paths(), log_result=False)
+                self.statusBar().showMessage(result.message)
+            except Exception as exc:
+                self._append_log(f"Pull failed: {exc}", severity=LogSeverity.WARNING)
+                self.statusBar().showMessage("Pull failed")
+            finally:
+                self._pull_busy = False
+                self._refresh_busy_controls()
+
+        timer.timeout.connect(finish)
+        timer.start(100)
+
     def _push_manually(self) -> None:
         """Ask before explicitly pushing the checked-out branch to its upstream."""
-        if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy:
+        if self._repo_info is None or self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy:
             return
         try:
             state = current_push_state(self._repo_info.root)
@@ -1210,7 +1264,7 @@ class MainWindow(QMainWindow):
         self._push_to_upstream(auto=True, expected_target=target)
 
     def _push_to_upstream(self, *, auto: bool = False, expected_target: PushTarget | None = None) -> bool:
-        if self._repo_info is None or self._push_busy:
+        if self._repo_info is None or self._push_busy or self._pull_busy:
             return False
         self._push_busy = True
         self._refresh_busy_controls()
@@ -1253,7 +1307,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
     def _refresh_busy_controls(self) -> None:
-        any_busy = self._pack_busy or self._apply_busy or self._push_busy
+        any_busy = self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy
 
         self.create_pack_button.setEnabled(not any_busy)
         self.export_new_pack_button.setEnabled(not any_busy)
@@ -1261,15 +1315,20 @@ class MainWindow(QMainWindow):
         self._refresh_export_pack_button()
         self.create_pack_button.setText("Creating..." if self._pack_busy else "Create pack")
 
+        self.pull_button.setEnabled(not any_busy and self._repo_info is not None)
+        self.pull_button.setText("Pulling..." if self._pull_busy else "Pull")
+        self.repo_path_edit.setEnabled(not self._pull_busy)
+        self.refresh_commits_button.setEnabled(not self._pull_busy)
+        self.settings_button.setEnabled(not self._pull_busy)
         self.push_button.setEnabled(not any_busy and self._repo_info is not None)
         self.push_button.setText("Pushing..." if self._push_busy else "Push")
         self.apply_latest_patch_button.setEnabled(not any_busy)
         self.apply_latest_patch_button.setText("Applying..." if self._apply_busy else "Apply patch")
 
-        self.check_latest_patch_button.setEnabled(not (self._apply_busy or self._push_busy))
-        self.dry_run_patch_button.setEnabled(not (self._apply_busy or self._push_busy))
-        self.undo_last_commit_button.setEnabled(not (self._apply_busy or self._push_busy))
-        self.deploy_repo_button.setEnabled(not (self._apply_busy or self._push_busy))
+        self.check_latest_patch_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
+        self.dry_run_patch_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
+        self.undo_last_commit_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
+        self.deploy_repo_button.setEnabled(not (self._apply_busy or self._push_busy or self._pull_busy))
         self.browse_button.setEnabled(not any_busy)
         self.refresh_button.setEnabled(not any_busy)
         self.clear_session_files_button.setEnabled(not any_busy)
@@ -1290,7 +1349,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_export_pack_button(self) -> None:
         self.export_pack_button.setEnabled(
-            not (self._pack_busy or self._apply_busy or self._push_busy)
+            not (self._pack_busy or self._apply_busy or self._push_busy or self._pull_busy)
             and self._selected_pack_for_export() is not None
         )
 
@@ -2040,7 +2099,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Patch check failed with exit code {result.returncode}")
 
     def _apply_latest_patch(self, *, dry_run: bool) -> None:
-        if self._apply_busy or self._push_busy:
+        if self._apply_busy or self._push_busy or self._pull_busy:
             return
 
         self._set_apply_busy(True)

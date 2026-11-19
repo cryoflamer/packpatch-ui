@@ -966,3 +966,38 @@ def test_saved_global_window_geometry_is_restored_once_on_startup(qtbot, tmp_pat
     window._autosave_timer.stop()
     assert window._geometry_restore_done
     assert window._session_store.load_window_geometry() == ""
+
+
+def test_manual_pull_locks_controls_and_refreshes(window, tmp_path, monkeypatch, qtbot):
+    from threading import Event
+    from packpatch_ui.core.git_pull import PullResult
+    from packpatch_ui.core.git_push import PushTarget
+
+    repo = init_repo(tmp_path / "pull-repo")
+    window.repo_path_edit.setText(str(repo))
+    window._refresh_repository_status()
+    release = Event()
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_target",
+                        lambda root: PushTarget("main", "origin", "refs/heads/main"))
+
+    def fake_pull(root, *, expected_target):
+        assert root == repo
+        assert expected_target.branch == "main"
+        if not release.wait(5):
+            return PullResult(False, "test timed out")
+        (repo / "README.md").write_text("pulled\n")
+        git(repo, "commit", "-am", "Incoming commit")
+        return PullResult(True, "Pull completed.", updated=True)
+
+    monkeypatch.setattr("packpatch_ui.ui.main_window.pull_current_branch", fake_pull)
+    window.pull_button.click()
+    try:
+        assert not window.pull_button.isEnabled()
+        assert not window.push_button.isEnabled()
+        assert not window.apply_latest_patch_button.isEnabled()
+        assert not window.session_combo.isEnabled()
+    finally:
+        release.set()
+        qtbot.waitUntil(lambda: not window._pull_busy, timeout=7000)
+    assert window.pull_button.isEnabled()
+    assert "Incoming commit" in window.commit_list.item(0).text()

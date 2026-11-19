@@ -79,6 +79,15 @@ The UI also includes:
 - `Undo last commit`, implemented as `git reset --mixed HEAD~1`;
 - optional stash after undo, including unversioned files.
 
+### Git pull
+
+`Git commits → Pull` contacts the current branch upstream even when the cached ref
+shows no changes. It runs in a background thread, requires a clean working tree
+(including untracked files), and uses `git pull --ff-only --no-rebase --no-autostash`.
+Divergent histories and in-progress Git operations are rejected. Repository controls
+are locked until completion; commit history and repository status are refreshed.
+Network pull is bounded to 60 seconds, with Git output in the Debug log.
+
 ### Git push
 
 `Git commits → Push` confirms the configured upstream before sending local commits
