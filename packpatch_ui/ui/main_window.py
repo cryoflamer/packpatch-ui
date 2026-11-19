@@ -1212,8 +1212,13 @@ class MainWindow(QMainWindow):
                 result = future.result()
                 self._append_log(result.message, verbosity=LogVerbosity.STATUS, severity=LogSeverity.INFO if result.succeeded else LogSeverity.WARNING)
                 for output in (result.stdout, result.stderr):
-                    if output.strip():
-                        self._append_log(output.strip(), verbosity=LogVerbosity.DEBUG)
+                    for line in output.splitlines():
+                        if not line.strip():
+                            continue
+                        if not result.succeeded and line.lstrip().lower().startswith(("fatal:", "error:")):
+                            self._append_log(line.strip(), verbosity=LogVerbosity.STATUS, severity=LogSeverity.ERROR)
+                        else:
+                            self._append_log(line, verbosity=LogVerbosity.DEBUG, severity=LogSeverity.INFO)
                 self._refresh_repository_status(self.file_tree.selected_paths(), log_result=False)
                 self.statusBar().showMessage(result.message)
             except Exception as exc:

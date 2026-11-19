@@ -43,7 +43,7 @@ def pull_current_branch(root: Path, *, expected_target: PushTarget | None = None
         if git("status", "--porcelain", "--untracked-files=all").stdout.strip():
             return PullResult(False, "Working tree is not clean; pull cancelled.")
         before = git("rev-parse", "HEAD").stdout.strip()
-        result = git("pull", "--ff-only", "--no-rebase", "--no-autostash", "--no-recurse-submodules",
+        result = git("-c", "merge.autostash=false", "pull", "--ff-only", "--no-rebase", "--no-recurse-submodules",
                      "--", target.remote, target.destination_ref)
         updated = before != git("rev-parse", "HEAD").stdout.strip()
         return PullResult(True, "Pull completed." if updated else "No incoming commits.",

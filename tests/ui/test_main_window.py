@@ -1001,3 +1001,32 @@ def test_manual_pull_locks_controls_and_refreshes(window, tmp_path, monkeypatch,
         qtbot.waitUntil(lambda: not window._pull_busy, timeout=7000)
     assert window.pull_button.isEnabled()
     assert "Incoming commit" in window.commit_list.item(0).text()
+
+
+def test_manual_pull_failure_shows_git_errors_in_status(window, tmp_path, monkeypatch, qtbot):
+    from packpatch_ui.core.git_pull import PullResult
+    from packpatch_ui.core.git_push import PushTarget
+
+    repo = init_repo(tmp_path / "pull-error-repo")
+    window.repo_path_edit.setText(str(repo))
+    window._refresh_repository_status()
+    window._set_log_verbosity("status")
+    monkeypatch.setattr("packpatch_ui.ui.main_window.current_push_target",
+                        lambda root: PushTarget("main", "origin", "refs/heads/main"))
+    monkeypatch.setattr("packpatch_ui.ui.main_window.pull_current_branch",
+                        lambda *args, **kwargs: PullResult(
+                            False, "Git pull failed (exit 128).", stdout="ordinary output",
+                            stderr="remote: progress\nfatal: connection failed\nerror: fetch failed"))
+    window.pull_button.click()
+    qtbot.waitUntil(lambda: not window._pull_busy, timeout=7000)
+    status = window.log.toPlainText()
+    assert "Git pull failed (exit 128)." in status
+    assert "fatal: connection failed" in status
+    assert "error: fetch failed" in status
+    assert "ordinary output" not in status
+    assert "remote: progress" not in status
+    window._set_log_verbosity("debug")
+    debug = window.log.toPlainText()
+    assert "ordinary output" in debug
+    assert "remote: progress" in debug
+    assert debug.count("fatal: connection failed") == 1

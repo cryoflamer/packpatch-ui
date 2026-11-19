@@ -83,10 +83,12 @@ The UI also includes:
 
 `Git commits → Pull` contacts the current branch upstream even when the cached ref
 shows no changes. It runs in a background thread, requires a clean working tree
-(including untracked files), and uses `git pull --ff-only --no-rebase --no-autostash`.
+(including untracked files), and uses `git -c merge.autostash=false pull --ff-only --no-rebase --no-recurse-submodules`.
 Divergent histories and in-progress Git operations are rejected. Repository controls
 are locked until completion; commit history and repository status are refreshed.
-Network pull is bounded to 60 seconds, with Git output in the Debug log.
+Network pull is bounded to 60 seconds, with Git output in the Debug log. On failure,
+`fatal:` and `error:` lines are also visible in Status. The configuration override
+avoids the `--no-autostash` flag, which older Git versions reject with `--no-rebase`.
 
 ### Git push
 
